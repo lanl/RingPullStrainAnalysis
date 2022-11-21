@@ -24,28 +24,11 @@ WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
 OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
 ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-NAME
+
+# NAME
     RingPullStrainAnalysis - Ring Pull Strain Analysis (RPSA)
 
-DESCRIPTION
-    RPSA is intended as an python module to investigate data from digital image 
-    correlation software such as DICengine or VIC 2-D. Its primary capability
-    involves taking an output 2-dimensional mesh of strain data specific to a 
-    gaugeless Ring Pull test and analyzing it for parameters of interest. RPSA 
-    also allows input load frame data that is synchronized with the DIC images.
-    
-    v1.1
-    
-    Created by:
-        Peter Beck
-        pmbeck@lanl.gov
-    Updated:
-        4-Oct-2022
-
-NAME
-    RingPullStrainAnalysis - Ring Pull Strain Analysis (RPSA)
-
-DESCRIPTION
+# DESCRIPTION
     RPSA is intended as an python module to investigate data from digital image 
     correlation software such as DICengine or VIC 2-D. Its primary capability
     involves taking an output 2-dimensional mesh of strain data specific to a 
@@ -60,7 +43,7 @@ DESCRIPTION
     Updated:
         21-Nov-2022
 
-CLASSES
+# CLASSES
     builtins.object
         DIC_image
         RingPull
@@ -173,7 +156,7 @@ CLASSES
      |  __weakref__
      |      list of weak references to the object (if defined)
 
-FUNCTIONS
+# FUNCTIONS
     UI_circle(ax, prompt, facecolor)
     
     UI_get_pts(prompt, n=None)
@@ -199,7 +182,7 @@ FUNCTIONS
     
     make_pixel_box(img, m, n, value, box_size=3)
 
-DATA
+# DATA
     pi = 3.141592653589793
 
 
