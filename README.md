@@ -2,6 +2,8 @@
 
 RingPullStrainAnalysis is distributed as open-source software under a BSD-3 License (see the ``LICENSE`` file for details).
 
+LANL open source approval reference C22100.
+
 © 2022. Triad National Security, LLC. All rights reserved.
 This program was produced under U.S. Government contract 89233218CNA000001 for Los Alamos
 National Laboratory (LANL), which is operated by Triad National Security, LLC for the U.S.
