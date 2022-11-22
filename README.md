@@ -23,6 +23,7 @@ others to do so.
     involves taking an output 2-dimensional mesh of strain data specific to a 
     gaugeless Ring Pull test and analyzing it for parameters of interest. RPSA 
     also allows input load frame data that is synchronized with the DIC images.
+    To run this code, please see the tutorial PDF and the example script.
     
     v1.1
     
