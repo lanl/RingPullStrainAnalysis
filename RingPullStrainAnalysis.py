@@ -5,7 +5,8 @@ RPSA is intended as an python module to investigate data from digital image
 correlation software such as DICengine or VIC 2-D. Its primary capability
 involves taking an output 2-dimensional mesh of strain data specific to a 
 gaugeless Ring Pull test and analyzing it for parameters of interest. RPSA 
-also allows input load frame data that is synchronized with the DIC images.
+also allows input load frame data that is synchronized with the DIC images. 
+
 
 v1.1
 
@@ -73,11 +74,13 @@ def make_figure(ax=None):
     ax.tick_params(axis='y', which='major', direction='in', left=True, right=True, length=4)
     ax.tick_params(axis='y', which='minor', direction='in', left=True, right=True, length=2)
     ax.tick_params(direction='in')
+    f.set_size_inches(1920/f.dpi,1200/f.dpi)
+    f.subplots_adjust(top=0.9,bottom=0.11,left=0.14,right=0.9,hspace=0.2,wspace=0.2)
     return f,ax
 
 def make_img_figure(ax=None):
     if ax==None:
-        f = plt.figure(dpi=200)
+        f = plt.figure(dpi=300)
         ax = plt.axes()
         f.set_size_inches([6.4,4])
     else:
@@ -144,18 +147,22 @@ def define_circle(p1, p2, p3):
     return ((cx, cy), radius)
 
 def UI_get_pts(prompt,n=None):
+    plt.gcf().subplots_adjust(top=0.80,bottom=0.05,left=0.05,right=0.95,hspace=0.2,wspace=0.2)
     prompt += '\nRight click to finish.\nMiddle mouse to remove points'
     plt.title(prompt)
     plt.draw() 
     while True:
-            pts = plt.ginput(1000, timeout=-1,mouse_pop=MouseButton.MIDDLE,mouse_stop=MouseButton.RIGHT)
-            if type(n) == type(None):
+        pts = plt.ginput(1000, timeout=-1,mouse_pop=MouseButton.MIDDLE,mouse_stop=MouseButton.RIGHT)
+        if type(n) == type(None):
+            break
+        elif len(pts)==n:
+            break
+        elif n=='even':
+            if len(pts)%2==0:
                 break
-            elif len(pts)==n:
-                break
-            else:
-                plt.title('Error, retrying.\n'+prompt)
-                plt.draw()
+        #if the above if statement doesn't break the while loop
+        plt.title('Error, retrying.\n'+prompt)
+        plt.draw()
     return pts
 
 
@@ -181,8 +188,6 @@ def UI_circle(ax,prompt,facecolor):
 
 def UI_polygon(ax,prompt,facecolor):
     while True:
-        plt.title(prompt)
-        plt.draw()
         pts = UI_get_pts(prompt,1000)
         pts.append(pts[0])
         pts = np.array(pts)
@@ -516,7 +521,7 @@ class DIC_image:
             plot_img = mpimg.imread(self.test_img_file)
         
         # create images to fill in DIC strain values
-        DIC_img = np.zeros(plot_img.shape, dtype=plot_img.dtype)
+        DIC_img = np.zeros(plot_img.shape, dtype=float)+1e7
         
         if not max_strain: ##if max_strain==None
             max_strain = np.nanmax(abs(df[mode]))
@@ -530,27 +535,27 @@ class DIC_image:
                 n = int((df.loc[row, 'x']+df.loc[row, 'u'])*self.scale)
                 m = int((df.loc[row, 'y']+df.loc[row, 'v'])*self.scale)
             e_row = df.loc[row,mode]
-            img_value = int(abs(e_row)/max_strain*255)
             
-            if log_transform and img_value!=0:#transform into log space
-                img_value = np.log(float(img_value))/np.log(255)*255
-                img_value=int(img_value)
-                
-            #converts the absolute value back into positive/negative
-            img_value=(img_value*np.sign(e_row)+255)/2
-                
-            if img_value==0:
-                #make it a minimum 1 so that it doesn't get masked later
-                img_value=1
+            
+            if log_transform:
+                #make all values positive
+                img_value = abs(e_row)
+                #log transform goes from (1,lim) -> higher lim = steeper transform
+                lim=1e2
+                img_value = 1+img_value/max_strain*(lim-1)
+                img_value = np.log(img_value)/np.log(lim)
+                #converts the absolute value back into positive/negative
+                img_value=img_value*np.sign(e_row)*max_strain
+
             DIC_img = make_pixel_box(DIC_img, m, n, img_value,pixel_size)
         
         
         # add pixels to the centroid of the image
-        DIC_img = make_pixel_box(DIC_img, self.centroid_pixel[0], self.centroid_pixel[1], 255,pixel_size)
+        DIC_img = make_pixel_box(DIC_img, self.centroid_pixel[0], self.centroid_pixel[1], max_strain,pixel_size)
         
-        # Mask the image to only show the pixels !=0
+        # Mask the image to only show the pixels !=1e7
         # this helps with plotting
-        DIC_img = ma.masked_where(DIC_img == 0, DIC_img)
+        DIC_img = ma.masked_where(DIC_img == 1e7, DIC_img)
         
         #set RGB colors from 0 - 1 for points on the colorbar
         r_set = (.2, 0,.65, .2,  1, 1, .5)
@@ -567,10 +572,10 @@ class DIC_image:
         
         # plot the DIC data on the image
         ax.imshow(plot_img, cmap='gray')
-        cmapable=ax.imshow(DIC_img, interpolation='none',vmin=0,vmax=255, **plot_kwargs)
+        cmapable=ax.imshow(DIC_img, interpolation='none',vmin=-max_strain,vmax=max_strain, **plot_kwargs)
         
         
-        cbar=plt.colorbar(cmapable,ax=ax,ticks=[0,128,255])
+        cbar=plt.colorbar(cmapable,ax=ax,ticks=[-max_strain,0,max_strain])
         cbar.ax.set_yticklabels([f'{-max_strain:.4f}',f'{0:.4f}',f'{max_strain:.4f}'],rotation=45)
         cbar.set_label('strain ('+mode+')', rotation=270, labelpad=10)
         for label in cbar.ax.get_yticklabels():
@@ -1018,9 +1023,9 @@ class RingPull():
         return f,ax
     
         
-    def plot_strain_distribution(self, n, theta=pi/2, mode='e_vm',extrap=False, ax=None,
+    def plot_strain_distribution(self, n, theta=pi/2, mode='ett',extrap=False, ax=None,
                                  fill=False,  fill_colors = ['#F47558', '#89D279'], 
-                                 plot_kwargs={'color': 'k', 'label': 'ett'}):
+                                 plot_kwargs={'color': 'k'}):
         f, ax = make_figure(ax)
 
         # open DIC_Image
@@ -1028,8 +1033,6 @@ class RingPull():
         # plot the strain distribution
         a, e = img.get_strain_distribution(theta, mode, extrap)
         
-        
-
         # plot the strain distribution
         ax.plot(a, e, **plot_kwargs)
         if fill:
@@ -1045,7 +1048,7 @@ class RingPull():
         # modify the axis parameters to create pretty plots
         ax.set_xlim(0, 1)
         ax.set_ylabel('strain [mm/mm]')
-        ax.plot([0, 1], [0, 0], '--k')
+        ax.axhline(0,color='k',ls='--',lw=.5)
         ax.tick_params(axis='x', which='minor', direction='in', top=False, bottom=False, length=2)
         ax.set_xticks([0, 1])
         ax.set_xticklabels(['ID', 'OD'])
@@ -1054,7 +1057,7 @@ class RingPull():
 
     def plot_stress_strain(self, ax=None, shift=False,
                            x_axis='eng_strain', y_axis='stress (MPa)',
-                           plot_kwargs={'linestyle': '-','marker':'*','markersize': 1.5}):
+                           plot_kwargs={'linestyle': '-','linewidth':1,'marker':'o','markersize': 1.5}):
  
         f,ax = make_figure(ax)# if no axes provided, create one
 
@@ -1085,7 +1088,7 @@ class RingPull():
         root.destroy()
         
         if f is None: # asksaveasfile return `None` if dialog closed with "cancel".
-            print('ADid not save data')
+            print('Did not save data')
         else:
             # save data to output file. 
             self.df.to_csv(f.name, index=False)
