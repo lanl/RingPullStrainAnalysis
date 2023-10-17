@@ -1,29 +1,48 @@
 '''
 Ring Pull Strain Analysis (RPSA)
 
-RPSA is intended as an python module to investigate data from digital image 
-correlation software such as DICengine or VIC 2-D. Its primary capability
-involves taking an output 2-dimensional mesh of strain data specific to a 
-gaugeless Ring Pull test and analyzing it for parameters of interest. RPSA 
-also allows input load frame data that is synchronized with the DIC images. 
+RPSA is intended as an python module to investigate data either from digital 
+image correlation software such as DICengine or VIC 2-D or from physical 
+simulation software such as MOOSE. Its primary capability involves taking an 
+output 2-dimensional mesh of strain data specific to a gaugeless Ring Pull test 
+and analyzing it for parameters of interest. RPSA also allows input load frame 
+data that is synchronized with the DIC images.
 
-
-v1.1
+v1.3
 
 Created by:
     Peter Beck
     pmbeck@lanl.gov
 Updated:
-    21-Nov-2022
+    03-Oct-2023
 
+
+General notes on naming conventions and coding practices:
+    - All class objects are in camel case 
+    - All functions: words are separated with underscores
+    - Functions starting with an underscore are mainly meant for internal use
+    - variables are typically one word, but if multiple words, they are typically separated with underscore
+    - The packages numpy (np) and pandas (pd) are frequently used and referred to by their abbreviations
+    - most functions can either take a float, a list or a numpy array. 
+    - A matplotlib axes method can be passed to any plotting method and it 
+        will plot on that axes.
+    - Some plotting methods allow for kwargs to be passed to the underlying
+        plotting methods.
+    - Some methods have a user interface.They interface was made to work on the 
+        following settings, however, it is likely to work with other system 
+        configurations. The settings are: 
+            - Windows 10
+            - Python 3.8.8 (installed via Anaconda)
+            - Spyder 4, with the setting:
+                - IPython console -> Graphics -> Backend: Automatic
 '''
 
 
 # Generic imports
-import pickle
 import os
 import time
 import imageio
+import copy
 import seaborn
 seaborn.set_palette('Set1') #set color scheme
 
@@ -45,62 +64,141 @@ import matplotlib as mpl
 from matplotlib.backend_bases import MouseButton
 import matplotlib.path as mplPath
 from matplotlib.patches import Polygon
+from matplotlib.lines import Line2D
 # import matplotlib.gridspec as gridspec
+mpl.rcParams['figure.dpi'] = 300
+mpl.rcParams['legend.frameon'] = False
+mpl.rcParams.update({'font.size': 8})
 
 #scipy imports
 from scipy import interpolate,integrate
+from scipy.interpolate import interp1d
+from scipy.stats import linregress
 
 #tkinter imports
 import tkinter as tk
 from tkinter import simpledialog,filedialog
 
-mpl.rcParams['figure.dpi'] = 300
-
-# import seaborn
-# seaborn.set_palette('Set1')
-
+from matplotlib.gridspec import GridSpec
 
 
 def make_figure(ax=None):
+    '''
+    Description
+    -----------
+    A function that formats a matplotlib axes for plotting. If no axes is
+    specified, will create a figure and axes object
+    
+    Parameters
+    ----------
+    ax : matplotlib.axes, optional
+        The matplotlib axes object to modify. The default is None.
+
+    Returns
+    -------
+    f : matplotlib.figure
+        The created figure for the plot
+    ax : matplotlib.axes
+        The created axes for the plot
+    '''
     if ax==None:
         f = plt.figure()
         ax = plt.gca()
+        # f.set_size_inches(1920/f.dpi,1200/f.dpi)
+        f.set_size_inches([3.5,2.9])
+        f.subplots_adjust(top=0.92,bottom=0.12,left=0.17,right=0.96,hspace=0.2,wspace=0.2)        
     else:
         f = ax.get_figure()
     # axes housekeeping
-    ax.minorticks_on()
+    # ax.minorticks_on()
     ax.tick_params(axis='x', which='major', direction='in', top=True, bottom=True, length=4)
     ax.tick_params(axis='x', which='minor', direction='in', top=True, bottom=True, length=2)
     ax.tick_params(axis='y', which='major', direction='in', left=True, right=True, length=4)
     ax.tick_params(axis='y', which='minor', direction='in', left=True, right=True, length=2)
     ax.tick_params(direction='in')
-    f.set_size_inches(1920/f.dpi,1200/f.dpi)
-    f.subplots_adjust(top=0.9,bottom=0.11,left=0.14,right=0.9,hspace=0.2,wspace=0.2)
+
     return f,ax
 
 def make_img_figure(ax=None):
+    '''
+    Description
+    -----------
+    A function that formats a matplotlib axes for plotting images. If no axes is 
+    specified, will create a figure and axes object
+    
+    Parameters
+    ----------
+    ax : matplotlib.axes, optional
+        The matplotlib axes object to modify. The default is None.
+
+    Returns
+    -------
+    f : matplotlib.figure
+        The created figure for the plot
+    ax : matplotlib.axes
+        The created axes for the plot
+    '''
     if ax==None:
-        f = plt.figure(dpi=300)
+        f = plt.figure()
         ax = plt.axes()
-        f.set_size_inches([6.4,4])
+        f.set_size_inches(6.5,4)
     else:
         f = ax.get_figure()
 
     ax.axes.xaxis.set_visible(False)
     ax.axes.yaxis.set_visible(False)
+    f.subplots_adjust(top=0.875,bottom=0.085,left=0.05,right=0.95,hspace=0.2,wspace=0.2)
+    return f,ax
+
+def make_3D_figure(ax = None):
+    '''
+    Description
+    -----------
+    A function that formats a matplotlib axes for 3D plotting. If no axes is 
+    specified, will create a figure and axes object
+    
+    Parameters
+    ----------
+    ax : matplotlib.axes, optional
+        The matplotlib axes object to modify. The default is None.
+
+    Returns
+    -------
+    f : matplotlib.figure
+        The created figure for the plot
+    ax : matplotlib.axes
+        The created axes for the plot
+    '''
+    if ax==None:
+        f = plt.figure()
+        ax = f.add_subplot(projection='3d')
+    else:
+        f = ax.get_figure()
     return f,ax
     
-def make_pixel_box(img, m, n, value, box_size=3):
-    # in an image, sets the pixel specified by [m,n]
-    # and everthing in a (box_size x box_size) box around it to the input value
-    # box_size is rounded up to the nearest odd integer
-    box_size = np.floor(box_size/2).astype(int)
-    for m_i in range(m-box_size, m+1+box_size):
-        for n_i in range(n-box_size, n+1+box_size):
-            img[m_i, n_i] = value
-    return img
-
 def makeRGBA(r_set,g_set,b_set):
+    '''
+    Description
+    -----------
+    A function that creates a customcolormap from the lists of red-green-blue 
+    values. All inputs must be lists or tuples of the same length. This 
+    function creates evenly spaced gradients between the values listed in the 
+    arrays.
+    
+    Parameters
+    ----------
+    r_set : list,tuple of floats
+        list of values from 0-1 for how much red at each point.
+    g_set : list,tuple of floats
+        list of values from 0-1 for how much green at each point.
+    b_set : list,tuple of floats
+        list of values from 0-1 for how much blue at each point.
+
+    Returns
+    -------
+    custom_cmap : matplotlib.colors.ListedColormap
+        The custom colormap created with the input rgb values.
+    '''
     output=[]
     for cset in [r_set,g_set,b_set]:
         clist = []
@@ -112,25 +210,74 @@ def makeRGBA(r_set,g_set,b_set):
     output.append(np.ones(output[0].shape))
     return mpl.colors.ListedColormap(np.vstack(output).transpose())
 
-def make_GIF(images_list, output_filename, end_pause=True):
+r_set = (.2, 0, .1, .2,  1, 1, .5)
+g_set = (.4, 1, .7, .2, .8, 0,  0)
+b_set = (.2, 0,.75,  1, .4, 0,  0)
+custom_cmap = makeRGBA(r_set,g_set,b_set)
+del r_set, g_set, b_set
+
+def make_GIF(images_list, output_filename, end_pause=True,**writer_kwargs):
+    '''
+    Description
+    -----------
+    A function that creates a .gif file of all the input images
+    
+    Parameters
+    ----------
+    images_list : list of str
+        list of strings which contain the image filenames to put into the gif
+    output_filename : str
+        The filename to save the gif to.
+    end_pause : bool, int, optional
+        An integer of how many images to stack on the back of the gif to give 
+        the appearance of pausing the video. If False, no images are stacked.
+        If True, 80 images are stacked. The default is True
+    writer_kwargs : dict, optional
+        Keyword arguments to pass to the writer. default is sub_rectangles = True.
+
+    Returns
+    -------
+    None
+    
+    '''
+    default_kwargs = {'subrectangles':True}
+    writer_kwargs = { **default_kwargs, **writer_kwargs }
     if end_pause:
         if type(end_pause) == bool:
             end_pause = 80
         for n in range(end_pause):  # add some extra images at the end to 'pause' the GIF
             images_list.append(images_list[-1])
-    with imageio.get_writer(output_filename, mode='I') as writer:
+    with imageio.get_writer(output_filename, mode='I',**writer_kwargs) as writer:
         for f in images_list:
-            image = imageio.imread(f)
+            image = imageio.imread(f,pilmode='RGB')
             writer.append_data(image)
     print('GIF has been created at the following location:')
     print(output_filename)
-    
-    
+    return output_filename
+       
 def define_circle(p1, p2, p3):
-    """
+    '''
+    Description
+    -----------
     Returns the center and radius of the circle passing the given 3 points.
     In case the 3 points form a line, returns (None, infinity).
-    """
+    
+    Parameters
+    ----------
+    p1 : list, tuple of 2 floats 
+        the first point (x,y) used to define the circle.
+    p2 : list, tuple of 2 floats 
+        the second point (x,y) used to define the circle.
+    p3 : list, tuple of 2 floats 
+        the third point (x,y) used to define the circle.
+
+    Returns
+    -------
+    centroid : tuple of 2 floats
+        the (x,y) coordinates of the center of the circle
+    radius : float
+        the radius of the circle    
+    '''
     temp = p2[0] * p2[0] + p2[1] * p2[1]
     bc = (p1[0] * p1[0] + p1[1] * p1[1] - temp) / 2
     cd = (temp - p3[0] * p3[0] - p3[1] * p3[1]) / 2
@@ -147,7 +294,31 @@ def define_circle(p1, p2, p3):
     return ((cx, cy), radius)
 
 def UI_get_pts(prompt,n=None):
-    plt.gcf().subplots_adjust(top=0.80,bottom=0.05,left=0.05,right=0.95,hspace=0.2,wspace=0.2)
+    '''
+    Description
+    -----------
+    User interface to get points from the current matplotlib figure. Returns 
+    a list of points that the user selected
+    
+    Parameters
+    ----------
+    prompt : str
+        The prompt to the user describing the problem and which points to select.
+        This gets put in the title of the plot. A description of how to select 
+        the points is appended to the prompt.
+    n : int, optional
+        How many points the function should expect. If the user does not click 
+        the correct number of points, they get asked to do it again. If this 
+        value is None, then there is no set amount of points needed. The default
+        is None.
+
+    Returns
+    -------
+    pts : list of tuples of length 2
+        List of (x,y) points that the user selected
+    '''
+    
+    plt.gcf().subplots_adjust(top=0.80,bottom=0.08,left=0.17,right=0.95,hspace=0.2,wspace=0.2)
     prompt += '\nRight click to finish.\nMiddle mouse to remove points'
     plt.title(prompt)
     plt.draw() 
@@ -165,15 +336,42 @@ def UI_get_pts(prompt,n=None):
         plt.draw()
     return pts
 
-
-def UI_circle(ax,prompt,facecolor):
+def UI_circle(ax,prompt,facecolor,num = 50):
+    '''
+    Description
+    -----------
+    User interface to get 3 points and make a circle out of them. Then plots
+    this circle on the given graph. This function calls UI_get_pts to find 
+    the points.
+    
+    Parameters
+    ----------
+    ax : matplotlib.axes
+        The axes to select and plot the circle on
+        
+    prompt : str
+        The prompt to the user describing the problem and which points to select.
+        This gets put in the title of the plot. A description of how to select 
+        the points is appended to the prompt.
+    facecolor : matplotlib color input
+        The color to draw the circle out of. 
+    num : int, optional
+        number of points to return to create the circle. The default is 50.
+    
+    Returns
+    -------
+    pts :  num x 2 array of floats
+        array of (x,y) points that create a circle. the number of points is
+        based off the input parameter, num +1. The first and last
+        values of the array are the same in order to complete the circle.
+    '''
     while True:
         pts = UI_get_pts(prompt,3)
         c,r = define_circle(*pts)
         pts = [
             (r*np.cos(theta)+c[0],
              r*np.sin(theta)+c[1])
-            for theta in np.linspace(0,2*pi)]
+            for theta in np.linspace(0,2*pi,num)]
         my_circle = Polygon(pts, True, facecolor=facecolor,alpha = 0.2)
         ax.add_patch(my_circle)
         plt.title('Is this acceptable? Click to continue or hit enter to retry.')
@@ -187,6 +385,32 @@ def UI_circle(ax,prompt,facecolor):
     return np.array(pts)
 
 def UI_polygon(ax,prompt,facecolor):
+    '''
+    Description
+    -----------
+    User interface to get points and make a polygon out of them. Then plots
+    this polygon on the given graph. This function calls UI_get_pts to find 
+    the points.
+    
+    Parameters
+    ----------
+    ax : matplotlib.axes
+        The axes to select and plot the circle on
+        
+    prompt : str
+        The prompt to the user describing the problem and which points to select.
+        This gets put in the title of the plot. A description of how to select 
+        the points is appended to the prompt.
+    facecolor : matplotlib color input
+        The color to draw the polygon out of. 
+
+    Returns
+    -------
+    pts :  n x 2 array of floats
+        array of (x,y) points that create a polygon. The number of points is
+        based off how many points the user selects plus 1. The first and last
+        values of the array are the same in order to complete the polygon.
+    '''
     while True:
         pts = UI_get_pts(prompt,1000)
         pts.append(pts[0])
@@ -204,154 +428,600 @@ def UI_polygon(ax,prompt,facecolor):
             #ask for new circle
     return np.array(pts)
 
-
-def find_nearest_idx(x_array,y_array,x_i,y_i):
-    return ((x_array-x_i)**2 + (y_array-y_i)**2).argmin()
-
-
-# define function to request user input.
-def ask_ginput(n,x,y,prompt = 'Pick 2 points to define linear region'):
-    f,ax = make_figure()
-    plt.title('Click to begin', fontsize=16)
-    plt.show()
-    plt.waitforbuttonpress()
-    while True:
-        f.subplots_adjust(top=0.80,bottom=0.05,left=0.05,right=0.95,hspace=0.2,wspace=0.2)
-        ax.plot(x,y,'-o',color='C1')
-        pts = UI_get_pts(prompt,n)
-        idx = [find_nearest_idx(x,y,pt[0],pt[1]) for pt in pts]
-        plt.plot(x[idx],y[idx],'*-',color='r')
-        plt.title('Happy? Mouse click to continue,\nHit Enter to choose new points', fontsize=16)
-        plt.draw()
-        if plt.waitforbuttonpress():
-            plt.close(f)
-            del f
-            f=plt.figure()
-        else:
-            plt.close(f)
-            del f
-            break
-    return idx
-
-
-##################################################################    
-class DIC_image:
+def UI_line(ax,prompt,color='r'):
     '''
-    A class to analyze the output image and data file from the DIC software
-    Inputs:
-        test_img - image that you are analyzing the DIC from
-        init_img - initial image of the sample
-        DIC_software - the software used to run the image correlation
-        ID - the inner diameter of the sample
-        OD - the outer diameter of the sample
-        d_mandrel - the diameter of the pin used when loading the sample
-        data_keep_array - the index of the datapoints in the csv file to keep
-        scale - the scale of the image in pixels/mm   
-        centroid - the ring centroid pixel in the image      
-    '''
-
-    def __init__(self, test_img, init_img,DIC_software='VIC-2D',
-                 ID=9.46, OD=10.3, d_mandrel=3,
-                 data_keep_array=None,scale = None,centroid = None):
-
-        # read output csv from the DIC program
-        df = pd.read_csv(test_img.split('.')[0]+'.csv')
+    Description
+    -----------
+    User interface to get points and make a line out of them. Then plots
+    this line on the given graph. This function calls UI_get_pts to find 
+    the points.
+    
+    Parameters
+    ----------
+    ax : matplotlib.axes
+        The axes to select and plot the circle on
         
-        if DIC_software=='VIC-2D 7':
-            column_rename_dict = {'  "x"':'x','  "y"':'y',
-                                   '  "u"':'u','  "v"':'v',
-                                   '  "exx"':'exx','  "eyy"':'eyy','  "exy"':'exy',
-                                   '  "e1"':'e1','  "e2"':'e2',
-                                   '  "e_vonmises"':'e_vm','  "sigma"':'sigma'}
-        elif DIC_software=='VIC-2D 6':
-            column_rename_dict = {' "x"':'x','  "y"':'y',
-                                   '  "u"':'u','  "v"':'v',
-                                   '  "exx"':'exx','  "eyy"':'eyy','  "exy"':'exy',
-                                   '  "e1"':'e1','  "e2"':'e2',
-                                   '  "e_vonmises"':'e_vm','  "sigma"':'sigma'}
-        elif DIC_software=='DICe':
+    prompt : str
+        The prompt to the user describing the problem and which points to select.
+        This gets put in the title of the plot. A description of how to select 
+        the points is appended to the prompt.
+    color : matplotlib color input
+        The color to draw the line. 
+
+    Returns
+    -------
+    pts :  2 x 2 array of floats
+        array of (x,y) points that create the line.
+    '''
+    while True:
+        pts = UI_get_pts(prompt,2)
+        pts = np.array(pts)
+
+        my_line = Line2D(pts[:,0],pts[:,1])
+        ax.add_line(my_line)
+        
+        plt.title('Is this acceptable? Click to continue or hit enter to retry.')
+        plt.draw()
+        if not plt.waitforbuttonpress():#if mouse click
+            break
+        else: #if keyboard button
+            my_line.remove()
+            plt.draw()
+            #ask for new circle
+    return np.array(pts)
+
+def find_nearest_idx(x_array,y_array,x_q,y_q):
+    '''
+    Description
+    -----------
+    Given arrays in x and y, finds the index of the array point that is 
+    nearest to the test point, (x_q,y_q).
+    
+    Parameters
+    ----------
+    x_array : array_like
+        numpy array of x values.The size of this array should be the same as
+        the size of y_array
+    y_array : array_like
+        numpy array of y values.The size of this array should be the same as
+        the size of x_array
+    x_q : float
+        x coordinate of the test point
+    y_q : float
+        y coordinate of the test point
+        
+    Returns
+    -------
+    idx :  int
+        index in x_array and y_array that is closest to the test point
+    '''
+    return np.nanargmin(((x_array-x_q)**2)/abs(x_q) + ((y_array-y_q)**2)//abs(y_q))
+
+def log_transform(e_row,max_strain,lim=1e2):
+    '''
+    Description
+    -----------
+    A pseudo-logarithmic transform thet maps the linear region from 
+    (0,max_strain) to the logarithmic domain from (0,max_strain). It compresses 
+    the curve of y = ln(x) on the bounds (1,lim) to make this transform. 
+    This function returns the transformed value of e_row in the new space and 
+    it is symmetric about the origin, such that it can also handle negative 
+    values. It is useful for transforming an axis of a plot to logarithmic 
+    instead of linear.
+    
+    Parameters
+    ----------
+    e_row : float
+        the value to transform.
+    max strain : float
+        the maximum linear value to map. Any value of e_row larger in magnitude
+        than this will be replaced by this.
+    lim : float, bool, optional
+        parameter to judge how steep the transform will be. A higher value 
+        will create a steeper tranform. The default is 100.0.This can be a 
+        boolean. If false, will not perform the transform
+
+    Returns
+    -------
+    img_value : float
+        the transformed value.
+    '''
+    img_value = e_row
+    if lim:#if lim is True or a number, perform transform
+        if type(lim) == bool:
+            lim = 1e2
+        
+        #make all values positive
+        img_value = abs(img_value)
+    
+        img_value = 1+img_value/max_strain*(lim-1)
+        img_value = np.log(img_value)/np.log(lim)
+        #converts the absolute value back into positive/negative
+        img_value=img_value*np.sign(e_row)*max_strain
+    else: #if lim is False,do not perform transform
+        pass
+    return img_value
+
+################################################################## 
+class Image_Base:
+    '''
+    Description
+    -----------
+    Base class for handling and calculating strains on a dogbone sample during tensile testing.
+    '''
+    
+    def __init__(self, test_img, init_img, software='VIC-2D',centroid = (0,0),scale=1):
+        csv_file = test_img.split('.')[0]+'.csv'
+        self.df = pd.read_csv(csv_file)        
+        # rename column names to standard. VIC 2D puts excess spaces, which first need to be stripped.
+        column_rename_dict2 = {key:key.strip() for key in self.df.columns }
+        self.df.rename(column_rename_dict2, axis=1, inplace=True)
+
+        # delete all unnecessary data
+        self.df = self.df[self.df['"sigma"'] != -1]
+
+        if software == 'MOOSE':#need to add vonmises strain, e1,e2, and stresses
+            column_rename_dict = {'x':'x','y':'y','"Xp"':'x_def','"Yp"':'y_def',
+                                   'disp_x':'u','disp_y':'v',
+                                   'strain_xx':'exx','strain_yy':'eyy','strain_zz':'ezz',
+                                   'strain_yz':'eyz','strain_xz':'exz','strain_xy':'exy',
+                                   'firstinv_strain':'e_1invar'}
+        elif software=='VIC-2D':
+            column_rename_dict = {'"x"':'x','"y"':'y','"Xp"':'x_def','"Yp"':'y_def',
+                                  '"u"':'u','"v"':'v',
+                                  '"exx"':'exx','"eyy"':'eyy','"exy"':'exy',
+                                  '"e1"':'e1','"e2"':'e2',
+                                  '"e_vonmises"':'e_vm','"sigma"':'sigma'                }
+        elif software=='DICe':
             column_rename_dict = {'COORDINATE_X':'x','COORDINATE_Y':'y',
                                   'DISPLACEMENT_X':'u','DISPLACEMENT_Y':'v',
                                   'SIGMA':'sigma','VSG_STRAIN_XX':'exx',
                                   'VSG_STRAIN_YY':'eyy','VSG_STRAIN_XY':'exy'}
         else:
-            print("Could not recognize the DIC data. Please choose a DIC_software of 'VIC-2D 7', 'VIC-2D 6', or 'DICe'")
-            assert False
-        # rename column names to standard
-        df.rename(column_rename_dict, axis=1, inplace=True)
-
-        # if specified, delete all the entries out of the bounds of the ring
-        if type(data_keep_array) != type(None):
-            df = df[data_keep_array]
-            #delete all unnecessary data
-            df = df[df['sigma'] != -1]
+            assert False,"Could not recognize the software format. Please choose a software of 'MOOSE','VIC-2D', or 'DICe'"
         
+        
+        self.df.rename(column_rename_dict, axis=1, inplace=True)
+        
+        if not 'e_1invar' in self.df.columns:        
+            self.df['e_1invar'] = self.df['e1']+self.df['e2']
+            
+        self.df['x_def'] = self.df['x'] + self.df['u']
+        self.df['y_def'] = self.df['y'] + self.df['v']
+        
+        self.centroid = centroid
+
         if type(scale) != type(None):
             # convert from pixels to mm
-            self.scale = scale  # pixels/mm
-            
-            df[['x', 'y', 'u', 'v']] = df[['x', 'y', 'u', 'v']].apply(
-                lambda x: x/self.scale)
+            self.scale = scale  # pixels/mm        
+            self.df[['x', 'y', 'u', 'v', 'x_def', 'y_def']] = self.df[['x', 'y', 'u', 'v', 'x_def', 'y_def']].apply(
+                lambda x: x/self.scale)        
         else:
             self.scale = 1#default value if there is no scale
+        
         if type(centroid) != type(None):
             self.centroid_pixel = centroid.astype(int)
-            self.centroid_scaled = centroid/self.scale
+            self.centroid = centroid/self.scale
+            
+        self.test_img_file = test_img
+        self.init_img_file = init_img            
+        
+        # only save the columns that we care about
+        cols = np.array(self.df.columns)
+        self.df = self.df[cols[['"' not in s for s in cols]]]
+
+    def get_value(self,x,y,mode='e_vm',extrap=False):
+        x = x + self.centroid[0]
+        y = y + self.centroid[1]
+        
+        z = interpolate.griddata((self.df['x'], self.df['y']), self.df[mode].ravel(),
+                                 (x, y), method='cubic')
+        
+        
+        if extrap and np.isnan(z).any():
+            assert False, 'Sorry, extrapolation is not available at this time'
+            _get_extrap_values = np.vectorize(self._get_extrap_value)
+            z[np.isnan(z)] = _get_extrap_values(x,y,mode)        
+        
+        return z
+
+    def _get_extrap_value(self,a,theta,mode='e_vm'):
+        # maybe use this for 2-D extrapolation? https://github.com/pig2015/mathpy/blob/master/polation/globalspline.py
+        # https://stackoverflow.com/questions/34053174/python-scipy-for-2d-extrapolated-spline-function
+        
+        # general info on many python interpolation functions:
+        # https://stackoverflow.com/questions/37872171/how-can-i-perform-two-dimensional-interpolation-using-scipy
+        
+        a_i,z = self.get_strain_distribution(theta,mode,extrap=False,N=50)
+        z = np.reshape(z, a_i.shape)
+        a_i = a_i[np.invert(np.isnan(z))]
+        z=z[np.invert(np.isnan(z))]
+
+        
+        if (np.size(a_i) <= 1):#if the entire array is NaN or if there is not enough values to extrapolate off of
+            z = np.nan
         else:
-            # find the centroid as the center between the 
-            # largest and smallest x positions where there is data. Same with y.
-            centroid = np.array([min(df.x)+max(df.x), min(df.y)+max(df.y)])/2
-            self.centroid_pixel = centroid.astype(int)
-            self.centroid_scaled = centroid/self.scale
+            f = interpolate.interp1d(a_i,z,fill_value='extrapolate')
+            z = f(a)
+        return z
+
+    def get_value_deformed(self,x_def,y_def,mode='e_vm',extrap=False):
+        x_def = x_def + self.centroid[0]
+        y_def = y_def + self.centroid[1]
+        
+        z = interpolate.griddata((self.df['x_def'], self.df['y_def']), self.df[mode].ravel(),
+                                 (x_def, y_def), method='cubic')
+        if extrap:
+            assert False
+        return z
+
+    def digital_extensometer(self, x1,y1,x2,y2,ext_mode='norm'):
+        x_def1 = self.get_value(x1,y1,mode='x_def')
+        y_def1 = self.get_value(x1,y1,mode='y_def')
+        x_def2 = self.get_value(x2,y2,mode='x_def')
+        y_def2 = self.get_value(x2,y2,mode='y_def')
+        
+        if ext_mode =='norm':
+            pass
+        elif ext_mode=='x':
+            y_def1 = 0
+            y_def2 = 0
+        elif ext_mode=='y':
+            x_def1 = 0
+            x_def2 = 0
+            
+        vect=np.array((x1-x2,y1-y2))
+        disp = np.linalg.norm(vect,axis=0)
+        
+        return disp
+    
+    def plot_Image(self, state='deformed', mode='e_vm', log_transform_flag=1e2,
+                   max_strain=None, ax=None, **plot_kwargs):
+        '''
+        Description
+        -----------
+        A heat map of the strain around the ring. Specific to DIC data.       
+
+        Parameters
+        ----------
+        state : str, optional
+            Whether you want the ring plotted in the 'reference' or 'deformed' 
+            state. The default is 'deformed'.
+        mode : str, optional
+            The type of strain to plot. The default is 'e_vm'.
+        log_transform_flag : bool, float, optional
+            Flag for if the data should be plotted on a nonlinear scale. This 
+            nonlinear transform also uses this variable as a parameter for how 
+            nonlinear to make it. The default is 1e2.
+        max_strain : float, optional
+            Sets the plot limits for strain to plot. If False or None, the
+            function autoscales. The default is None.
+        ax : matplotlib.axes, optional
+            The matplotlib axes object to plot on. The default is None.
+        plot_kwargs : dict, optional
+            Dictionary of key word arguments to pass to the matplotlib scatter 
+            function. The default is {'alpha': 1,'cmap':'custom','s':0.25}.
+
+        Returns
+        -------
+        f : matplotlib.figure
+            The created figure for the plot
+        ax : matplotlib.axes
+            The created axes for the plot
+
+        '''
+
+        default_kwargs = {'alpha':1,'cmap':'custom','s':0.5}
+        plot_kwargs = { **default_kwargs, **plot_kwargs }
         
 
-        self.test_img_file = test_img
-        self.init_img_file = init_img
+        if not max_strain: ##if max_strain==None
+            max_strain = np.nanmax(abs(self.df[mode]))
+            
+        if state =='reference':
+            x = self.df['x']
+            y = self.df['y']
+            
+        elif state =='deformed':
+            x = self.df['x_def']
+            y = self.df['y_def']
+            
+        else:
+            assert False, "The state must be either 'reference' or 'deformed'"
         
-        # set some geometric ring dimensions as class attributes
+        x = x*self.scale
+        y = y*self.scale
+        
+        z = self.df[mode]
+        z = log_transform(z, max_strain, log_transform_flag)
+       
+        
+        # if user does not specify color map or if they say cmap = 'custom', 
+        # then set custom colormap
+        # if they set cmap to 'none' or None,
+        # then take away DIC data, by making alpha = 0
+        try: 
+            if plot_kwargs['cmap']=='custom':
+                assert False
+            elif plot_kwargs['cmap']=='none':
+                plot_kwargs['alpha'] = 0
+                del plot_kwargs['cmap']
+            elif plot_kwargs['cmap']==None:
+                plot_kwargs['alpha'] = 0
+                del plot_kwargs['cmap']
+        except (KeyError,AssertionError):#if the cmap kwarg either doesn't exist or is 'custom'
+            if type(plot_kwargs)==type(None):
+                plot_kwargs={}
+            plot_kwargs['cmap'] = custom_cmap  
+            
+            
+        f,ax = make_img_figure(ax)
+        
+        try:#try to plot a real image behind the DIC data
+            if state =='reference':
+                plot_img = mpimg.imread(self.init_img_file)
+            elif state =='deformed':
+                plot_img = mpimg.imread(self.test_img_file)
+            ax.imshow(plot_img, cmap='gray') 
+        except:#no image associated with it
+            pass
+
+        cmapable = ax.scatter(x,y,c=z,vmin=-max_strain,vmax=max_strain,**plot_kwargs)
+
+        ax.axis('equal')
+        ax.axes.xaxis.set_visible(False)
+        ax.axes.yaxis.set_visible(False)
+
+        #plot cmap unless there is no color (alpha = 0)
+        if plot_kwargs['alpha']==0:
+            pass
+        else:
+            cbar=plt.colorbar(cmapable,ax=ax,
+                              ticks=[-max_strain,
+                                     log_transform(-max_strain*3/4, max_strain, log_transform_flag),
+                                     log_transform(-max_strain/2, max_strain, log_transform_flag),
+                                     log_transform(-max_strain/4, max_strain, log_transform_flag),
+                                     0,
+                                     log_transform(max_strain/4, max_strain, log_transform_flag),
+                                     log_transform(max_strain/2, max_strain, log_transform_flag),
+                                     log_transform(max_strain*3/4, max_strain, log_transform_flag),
+                                     max_strain])
+            cbar.ax.set_yticklabels([f'{-max_strain:.3f}','', f'{-max_strain/2:.3f}','',f'{0:.4f}','',f'{max_strain/2:.3f}','',f'{max_strain:.3f}'],
+                                     rotation=45)
+            cbar.set_label('strain ('+mode+')', rotation=270, labelpad=10)
+            for label in cbar.ax.get_yticklabels():
+                label.set_verticalalignment('baseline')
+        return f,ax  
+
+
+class Ring_Image(Image_Base):
+    '''
+    Description
+    -----------
+    A class to analyze the output image and data file from the DIC software. 
+    This class inherets from Image_Base and modifies methods pertaining to 
+    experimental (DIC) data.
+    '''
+
+    def __init__(self, test_img, init_img,software='VIC-2D 7',ID=9.46, OD=10.3, d_mandrel=3, OD_path=None, ID_path=None, scale = None, centroid=None):
+        '''
+        Description
+        -----------
+        Initializes DIC_Image class.
+        
+        Parameters
+        ----------
+        test_img : str
+            Filepath for the image that we are analyzing.
+        init_img : str
+            Filepath for the initial image.
+        software : str, optional
+            The software used to run the image correlation. The default is
+            'VIC-2D 7'.
+        ID : float, optional
+            The inner diameter of the sample in mm. The default is 9.46.
+        OD : float, optional
+            The outer dimater of the sample in mm. The default is 10.3.
+        d_mandrel : float, optional
+            the diameter of the mandrel used when loading the sample in mm. 
+            The default is 3.
+        OD_path : mplPath.Path object, optional
+            Path of the outer diameter which will be used for indexing points 
+            inside the area of interest(AOI). This is primarily going to be passed 
+            from the RingPull class. If None, will not exclude points outside 
+            the AOI. The default is None.
+        ID_path : mplPath.Path object, optional
+            Path of the inner diameter which will be used for indexing points 
+            inside the area of interest(AOI). This is primarily going to be passed 
+            from the RingPull class. If the variable OD_path is None, will not 
+            exclude points outside the AOI. The default is None.
+        scale : float, optional
+            The scale of the image in pixels/mm. If None, sets the scale to 1.
+            The default is None.
+        centroid : np.array, optional
+            Length 2 array of the (x,y) coordinates of the centroid of the 
+            ring. This is used to convert to polar coordinates. The default 
+            is None.
+
+        Returns
+        -------
+        None.
+        '''
+        
+        super().__init__(test_img, init_img, software, centroid, scale)
+
+        # if specified, delete all the entries out of the bounds of the ring
+        if type(OD_path) != type(None):
+            idx_pts = [(self.df['x'][n]*self.scale,self.df['y'][n]*self.scale) for n in self.df.index] 
+            inside = OD_path.contains_points(idx_pts)*np.invert(ID_path.contains_points(idx_pts))
+            self.df = self.df[inside] 
+
+        if type(centroid) == type(None):
+            # have not determined the center, then use ring geometry to find it
+            # find the centroid as the center between the 
+            # largest and smallest x positions where there is data. Same with y.
+            centroid = np.array([min(self.df.x)+max(self.df.x), min(self.df.y)+max(self.df.y)])/2
+            self.centroid = centroid
+
+        # only save the columns that we care about
+        cols = np.array(self.df.columns)
+        self.df = self.df[cols[['"' not in s for s in cols]]]
+        
+        # set geometric dimensions as class attributes
         self.ID = ID
         self.OD = OD
         self.d_avg = (ID+OD)/2
         self.d_mandrel = d_mandrel
+        self.thickness = (OD-ID)/2
 
+        
+    def find_displacement(self):
+        '''
+        Description
+        -----------
+        Calculates the displacement of the mandrels by using the inner 
+        surface of the ring where it contacts the mandrels. This is used to 
+        bypass complicance of the load frame.
 
-        # find gauge length
-        # L. Yegorova, et al., Description of Test Procedures and Analytical Methods, Database on the Behavior of High Burnup Fuel Rods with Zr1%Nb Cladding and UO2 Fuel (VVER Type) under Reactivity Accident Conditions, 2, U.S. Nuclear Regulatory Commission, 1999, pp. 6.16e6.19. NUREG/IA-0156, n.d.
-        k = 1
-        self.gauge_length = pi/2*(self.d_avg-k*d_mandrel)
-        self.pin_angle = pi/2*(1-(k*d_mandrel)/self.d_avg)+pi/2
+        Returns
+        -------
+        disp : float
+            The calculated displacement.
+        '''
+        # look at the inner surface of the ring on either side
+        a = 0.00
+        theta = [0, pi]
+        # find the deformation vector, u
+        z = self.get_value(a, theta, mode='u',extrap = True)
+        # subtract the two deformation vectors to get displacement
+        disp = float(z[0]-z[1])    
+        return disp  
 
-        if not 'e_1invar' in df.columns:        
-            df['e_1invar'] = df['e1']+df['e2']
-        if not 'e_hydro' in df.columns:
-            df['e_hydro'] = df['e_1invar']/3
-            
-        # only save the columns that we care about
-        df = df[['x', 'y', 'u', 'v', 'exx',
-                      'exy', 'eyy', 'e1', 'e2',
-                      'e_vm','e_1invar','e_hydro']]        
-        self.df = df
+    def _get_extrap_value(self,a,theta,mode='e_vm'):
+        '''
+        Description
+        -----------
+        This function is intended to extrapolate strain values at the edge of 
+        the ring . Since there is no mathematical basis for 2D extrapolation, 
+        we look only across the thickness of the ring (theta = constant, 
+        a = from 0 to 1) and create a 1D curve. This function then returns the
+        extrapolated value from the curve.
+        
+        Parameters
+        ----------
+        a : float
+            The value of a to get strain value from.
+        theta : float
+            The value of theta to get strain value from.
+        mode : str, optional
+            The type of strain to return. The default is 'e_vm'.
+
+        Returns
+        -------
+        z : float
+            The extrapolated strain value
+        '''
+        
+        # maybe use this for 2-D extrapolation? https://github.com/pig2015/mathpy/blob/master/polation/globalspline.py
+        # https://stackoverflow.com/questions/34053174/python-scipy-for-2d-extrapolated-spline-function
+        
+        # general info on many python interpolation functions:
+        # https://stackoverflow.com/questions/37872171/how-can-i-perform-two-dimensional-interpolation-using-scipy
+        
+        a_i,z = self.get_strain_distribution(theta,mode,extrap=False,N=50)
+        z = np.reshape(z, a_i.shape)
+        a_i = a_i[np.invert(np.isnan(z))]
+        z=z[np.invert(np.isnan(z))]
+
+        
+        if (np.size(a_i) <= 1):#if the entire array is NaN or if there is not enough values to extrapolate off of
+            z = np.nan
+        else:
+            f = interpolate.interp1d(a_i,z,fill_value='extrapolate')
+            z = f(a)
+        return z
+    
+    def get_value(self,a,theta,mode='e_vm',extrap=False):
+        '''
+        Description
+        -----------
+        Returns the requested values of strain or displacement at a specific 
+        point defined by a and theta. This value will be interpolated between
+        the surrounding grid points. Optional extrapolation as described in the 
+        _get_extrap_values function.
+
+        Parameters
+        ----------
+        a : float, np.array
+            The location, a within the ring of the requested values. 
+            a = 0 corresponds with the inner surface of the ring and
+            a = 1 corresponds with the outer surface of the ring.
+        theta : float, np.array
+            The angular location of the requested values.
+        mode : str, optional
+            The reuqested strain/diplacement value to pull from the point 
+            cloud. The default is 'e_vm'.
+        extrap : bool, optional
+            Boolean flag for if extrapolation is requested. The default is False.
+
+        Returns
+        -------
+        z : float, np.array
+            The return value(s) of strain/displacement.
+
+        '''
+        # create a meshgrid of a and theta values that encompasses the input a and theta values
+        if mode not in self.df.columns:#mode is in df
+            self.analyze_radial_strains()
+
+        r = self.get_r(a)
+        # choose strain value to use
+        z = self.df[mode]
+        # convert to xy coordinates
+        x = r*np.cos(theta)+self.centroid[0]
+        y = -r*np.sin(theta)+self.centroid[1]
+        # mesh interpolation of values
+        
+        z = interpolate.griddata((self.df['x'], self.df['y']), z.ravel(),
+                                 (x, y), method='cubic')
+
+        if extrap and np.isnan(z).any():
+            _get_extrap_values = np.vectorize(self._get_extrap_value)
+            z[np.isnan(z)] = _get_extrap_values(a[np.isnan(z)],theta[np.isnan(z)],mode)
+        
+        return z
 
     def analyze_radial_strains(self):
+        '''
+        Description
+        -----------
+        For all the points in the point cloud DataFrame, transform cartesian 
+        strains to polar strains.
+
+        Returns
+        -------
+        None.
+
+        '''
+
         # make x-y coords start at the centroid of the figure
-        x = self.df['x'] - self.centroid_scaled[0]
-        y = self.df['y'] - self.centroid_scaled[1]
+        x = self.df['x'] - self.centroid[0]
+        y = self.df['y'] - self.centroid[1]
         # convert x-y to r-theta coords
         theta = np.arctan2(y, x)
-        # r = np.sqrt(x**2+y**2)
-        # a = self.get_a(r)
-        # a = pd.Series(a,theta.index)
-        # find the strain tensor for each datapoint entry
+        r = np.sqrt(x**2+y**2)
+
+        #add r and theta to the DataFrame
+        self.df['r'] = r
+        self.df['theta'] = theta
+        self.df['a'] = self.get_a(r)
         n=0
         n_max=len(self.df.index)
         for i in self.df.index:
-            # tensor=self.get_strain_tensor(a[i], theta[i], coords='rtheta')[-1]
-            
             tensor = np.matrix([[self.df.loc[i,'exx'],self.df.loc[i,'exy']],
                                 [self.df.loc[i,'exy'],self.df.loc[i,'eyy']]])
             R = np.matrix([[np.cos(theta[i]), -np.sin(theta[i])], [np.sin(theta[i]), np.cos(theta[i])]])
             tensor = np.matmul(np.matmul(R,tensor),R.transpose())
-            
             self.df.loc[i,'err']=tensor[0, 0]
             self.df.loc[i,'ert']=tensor[1, 0]
             self.df.loc[i,'ett']=tensor[1, 1]
@@ -360,16 +1030,153 @@ class DIC_image:
             if n %1000 ==999:
                 print(str(n+1)+'/'+str(n_max+1)+' radial points analyzed')
             elif n==n_max:
-                print(str(n+1)+'/'+str(n_max+1)+' radial points analyzed')
-       
-    def digital_extensometer(self, ext_theta=None,ext_mode='norm'):
+                print(str(n+1)+'/'+str(n_max+1)+' radial points analyzed')        
+
+    def get_a(self, r):
+        '''
+        Description
+        -----------
+        Converts radius to parameter, a which is the fraction that we are 
+        looking into the thickness of the ring. a = 0 corresponds with the 
+        inner surface and a = 1 corresponds with the outer surface.
+        
+        Parameters
+        ----------
+        r : float
+            radius to evaluate.
+
+        Returns
+        -------
+        a : float
+            output fraction into the thickness of the ring.
+
+        '''
+        # from a radial position, return the value of a
+        r = np.array(r)
+        a = (2*r-self.ID)/(self.OD-self.ID)
+        return a
+
+    def get_r(self, a): 
+        '''
+        Description
+        -----------
+        Converts the parameter, a, to radius. a is the fraction that we are 
+        looking into the thickness of the ring. a = 0 corresponds with the 
+        inner surface and a = 1 corresponds with the outer surface.        
+
+        Parameters
+        ----------
+        a : float
+            fraction into ring thickness.
+
+        Returns
+        -------
+        r : float
+            radius to evaluate.
+
+        '''
+        # from an a value, return radial position
+        a = np.array(a)
+        r = (a*self.OD+(1-a)*self.ID)/2
+        return r
+
+    def _get_cart_meshgrid(self,a,theta):
+        '''
+        Description
+        -----------
+        creates a meshgrid in cartesian coordinates of points based off the 
+        input arrays.        
+        
+        Parameters
+        ----------
+        a : np.array
+            Array of values of parameter, a, to make meshgrid.
+        theta : np.array
+            Array of theta values to make meshgrid from.
+
+        Returns
+        -------
+        x : np.array
+            meshgrid of horizontal values.
+        y : np.array
+            meshgrid of vertical values.
+        '''
+
+        a, theta = np.meshgrid(a, theta)
+        r = self.get_r(a)
+        x = r*np.cos(theta)+self.centroid[0]
+        y = -r*np.sin(theta)+self.centroid[1]
+        return x,y
+
+    def get_strain_distribution(self, theta=pi/2, mode='ett', extrap = False,N=200):
+        '''
+        Description
+        -----------
+        Returns the distribution of strain across the thickness of the ring.
+        
+
+        Parameters
+        ----------
+        theta : float, np.array, optional
+            The value of theta to get strain value from. The default is pi/2.
+        mode : str, optional
+            The type of strain to return. The default is 'ett'.
+        extrap : TYPE, optional
+            Whether or not to use extrapolation to get values. If False, the 
+            function returns NaN values where it is not defined. The default 
+            is False.
+
+        Returns
+        -------
+        a : np.array
+            Array of a values from 0 to 1.
+        e : np.array
+            Matrix of strain values that correspond with the array of a values
+            and the input theta.
+        '''
+        
+        # get linspace of values spanning the thickness
+        a = np.linspace(0, 1, N)
+
+        # get the strain at each of these values
+        z = self.get_value(a,theta,mode,extrap)
+        # reshape this array to be a 1-d vector like a
+        z = z.transpose()
+        
+        return a, z  
+
+    def digital_extensometer(self, ext_theta,a = 0.5,ext_mode='norm'):
+        '''
+        Description
+        -----------
+        Tracks two points during the test and measures their relative movement
+        to each other. This is essentially a virtual extensometer that can be
+        placed anywhere. Can track either horizontal (x) displacement, 
+        vertical (y), or total displacement (norm).
+
+        Parameters
+        ----------
+        ext_theta : list,np.array
+            A length 2 list of the 2 angles to track. If None or False is
+            passed, will use the pin angle as theta values.
+        a : float, optional
+            The parameter a at which to evaluate the points. The default is 0.5.
+        ext_mode : str, optional
+            Options: 'x', 'y', 'norm'. The default is 'norm'.
+
+        Returns
+        -------
+        disp : float
+            The displacement value from the start of the test.
+
+        '''
         if not ext_theta:
             ext_theta=(self.pin_angle-pi/2,self.pin_angle)
         
         theta_min = ext_theta[0]
         theta_max = ext_theta[1]
         theta = np.linspace(theta_min,theta_max)
-        fun = lambda mode:np.array(self.get_value(0.5,theta,mode)[2])
+        fun = lambda mode:np.array(self.get_value(a,theta,mode))
         if ext_mode =='norm':
             position = np.array([fun('x')+fun('u'),fun('y')+fun('v')]).reshape((2,len(theta)))
         elif ext_mode=='x':
@@ -377,609 +1184,109 @@ class DIC_image:
         elif ext_mode=='y':
             position = np.array([0*fun('x'),fun('y')+fun('v')]).reshape((2,len(theta)))
         vect=np.diff(position)
-        return sum(np.linalg.norm(vect,axis=0))
-
-    def find_displacement(self):
-        # look at the inner surface of the ring on either side
-        a = 0.00
-        theta = [0, pi]
-        # find the deformation vector, u
-        _, _, z = self.get_value(a, theta, mode='u')
-        # subtract the two deformation vectors to get displacement
-        return float(z[0]-z[1])
-
-    def get_a(self, r):
-        # from a radial position, return the value of a
-        r = np.array(r)
-        return (2*r-self.ID)/(self.OD-self.ID)
-
-    def get_r(self, a):
-        # from an a value, return radial position
-        a = np.array(a)
-        return (a*self.OD+(1-a)*self.ID)/2
-
-    def get_extrap_value(self,a,theta,mode='e_vm'):
-        a_i = np.linspace(0,1,100)
-        z = self.get_value(a_i,theta,mode,extrap=False)[2]
-        z = np.reshape(z, a_i.shape)
-        a_i=a_i[np.invert(np.isnan(z))]
-        z=z[np.invert(np.isnan(z))]
+        disp = sum(np.linalg.norm(vect,axis=0))
         
-        if (np.size(a_i) <= 1):#if the entire array is NaN or if there is not enough values to extrapolate off of
-            return self.get_r(a), theta, np.nan
-        else:
-            f = interpolate.interp1d(a_i,z,fill_value='extrapolate')
-            return self.get_r(a), theta, f(a)
+        return disp
 
-    def get_value(self,a,theta,mode='e_vm',extrap=False):
-        # create a meshgrid of a and theta values that encompasses the input a and theta values
-        
-        if  mode in self.df.columns:#mode is in df
-            a, theta = np.meshgrid(a, theta)
-            r = self.get_r(a)
-            # choose strain value to use
-            z = self.df[mode]
-            # convert to xy coordinates
-            x = r*np.cos(theta)+self.centroid_scaled[0]
-            y = -r*np.sin(theta)+self.centroid_scaled[1]
-            # mesh interpolation of values
-            z = interpolate.griddata((self.df['x'], self.df['y']), z.ravel(),
-                                     (x, y), method='cubic')
-        else: # mode is ['err','ert','ett'] and have not run self.analyze_radial_strains()
-            # gets the strain tensor for each
-            _, _, z = self.get_strain_tensor(a, theta, coords='rtheta')
-            a, theta = np.meshgrid(a, theta)
-            r = self.get_r(a)
-            if type(z) != list:
-                z = [z]
-            z = np.array([z_i[0, 0] if mode == 'err'
-                          else z_i[0, 1] if mode == 'ert'
-                          else z_i[1, 1] for z_i in z])
-            z = np.reshape(z, r.shape)
-        if extrap and np.isnan(z).any():
-            get_extrap_values = np.vectorize(self.get_extrap_value)
-            z[np.isnan(z)] = get_extrap_values(a[np.isnan(z)],theta[np.isnan(z)],mode)[2]
-        return r, theta, z
+    def plot_Image(self, state='deformed', mode='e_vm', log_transform_flag=1e2,
+                   max_strain=None, ax=None, **plot_kwargs):
 
-
-    def get_strain_tensor(self, a=0.5, theta=pi/2, coords='xy'):
-        # get strain tensor values in xy coordinates
-        _, _, exx = self.get_value(a, theta, mode='exx')
-        _, _, exy = self.get_value(a, theta, mode='exy')
-        r, theta, eyy = self.get_value(a, theta, mode='eyy')
-
-        # flatten these values so we can iterate over them
-        exx = exx.flatten()
-        eyy = eyy.flatten()
-        exy = exy.flatten()
-        r = r.flatten()
-        theta = theta.flatten()
-
-        # create list of rotation matrices based on the list of theta
-        # if the coords input is 'xy', then it return the identity matrix
-        R_list = [np.matrix([[np.cos(theta[i]), -np.sin(theta[i])], [np.sin(theta[i]), np.cos(theta[i])]]) if coords == 'rtheta'
-                  else np.matrix([[1, 0], [0, 1]]) for i in range(len(theta))]
-        # create list of xy strain tensors
-        tensor_list = [np.matrix([[exx[i], exy[i]], [exy[i], eyy[i]]])
-                       for i in range(len(theta))]
-
-        # tensor rotation
-        # R * T * R^-1; R^-1 = R.transpose()
-        tensor_list = [np.matmul(np.matmul(
-            R_list[i], tensor_list[i]), R_list[i].transpose()) for i in range(len(tensor_list))]
-
-        # if there was only 1 input, return the tensor, not a list of tensors.
-        if len(tensor_list) == 1:
-            r = r[0]
-            theta = theta[0]
-            tensor_list = tensor_list[0]
-        return r, theta, tensor_list
-
-    def get_strain_distribution(self, theta=pi/2, mode='ett', extrap = False):
-        # get linspace of values spanning the thickness
-        a = np.linspace(0, 1, 200)
-
-        # get the strain at each of these values
-        _, _, e = self.get_value(a,theta,mode,extrap)
-        # transpose this array
-        e = e.transpose()
-
-        return a, e
-    
-    def plot_3d(self,mode='e_vm',ax=None):
-        if ax==None:
-            f=plt.figure()
-            f.subplots_adjust(top=1,bottom=0,left=0.1,right=0.9)
-            ax=plt.subplot(1,1,1,projection='3d')
-        else:
-            f = ax.get_figure()
-        a=np.linspace(0,1)
-        theta=np.linspace(0,2*pi,300)
-        r,theta,e = self.get_value(a, theta, mode)
-        
-        x=r*np.cos(theta)
-        y=r*np.sin(theta)
-        ax.plot_surface(x,y,e)
-        
-        ax.set_xlabel('x [mm]')
-        ax.set_ylabel('y [mm]')
-        ax.set_zlabel('strain [mm/mm]')
-        return f, ax
-
-    def plot_DIC(self, state='deformed', mode='e_vm',log_transform=True, max_strain=None, ax=None, plot_kwargs={'alpha': 1,'cmap':'custom'},pixel_size=3):
-        f,ax = make_img_figure(ax) # if no axes provided, create one
-
-        df = self.df
-        
-        #if looking for rtheta strains and it is not available, then create them
-        if mode in ['err','ert','ett'] and mode not in df.columns:
-            print('Could not find polar strain values. Analyzing for these values')
+        if mode not in self.df.columns:#if mode is ett,ert,err, then analyze strains
             self.analyze_radial_strains()
-        if state=='reference':
-            plot_img = mpimg.imread(self.init_img_file)
-        elif state=='deformed':
-            plot_img = mpimg.imread(self.test_img_file)
         
-        # create images to fill in DIC strain values
-        DIC_img = np.zeros(plot_img.shape, dtype=float)+1e7
-        
-        if not max_strain: ##if max_strain==None
-            max_strain = np.nanmax(abs(df[mode]))
-        
-        # fill in a blank image with DIC strain values
-        for row in df.index:
-            if state=='reference':
-                n = int(df.loc[row, 'x']*self.scale)
-                m = int(df.loc[row, 'y']*self.scale)
-            elif state=='deformed':
-                n = int((df.loc[row, 'x']+df.loc[row, 'u'])*self.scale)
-                m = int((df.loc[row, 'y']+df.loc[row, 'v'])*self.scale)
-            e_row = df.loc[row,mode]
-            
-            
-            if log_transform:
-                #make all values positive
-                img_value = abs(e_row)
-                #log transform goes from (1,lim) -> higher lim = steeper transform
-                lim=1e2
-                img_value = 1+img_value/max_strain*(lim-1)
-                img_value = np.log(img_value)/np.log(lim)
-                #converts the absolute value back into positive/negative
-                img_value=img_value*np.sign(e_row)*max_strain
-
-            DIC_img = make_pixel_box(DIC_img, m, n, img_value,pixel_size)
-        
-        
-        # add pixels to the centroid of the image
-        DIC_img = make_pixel_box(DIC_img, self.centroid_pixel[0], self.centroid_pixel[1], max_strain,pixel_size)
-        
-        # Mask the image to only show the pixels !=1e7
-        # this helps with plotting
-        DIC_img = ma.masked_where(DIC_img == 1e7, DIC_img)
-        
-        #set RGB colors from 0 - 1 for points on the colorbar
-        r_set = (.2, 0,.65, .2,  1, 1, .5)
-        g_set = (.4, 1, .4, .2, .8, 0,  0)
-        b_set = (.2, 0,  1,  1, .4, 0,  0)
-        
-        try:#if user does not specify color map or if they say colormap = 'custom', then set custom colormap
-            if plot_kwargs['cmap']=='custom':
-                assert False
-        except (KeyError,AssertionError):
-            if type(plot_kwargs)==type(None):
-                plot_kwargs={}
-            plot_kwargs['cmap']=makeRGBA(r_set,g_set,b_set)   
-        
-        # plot the DIC data on the image
-        ax.imshow(plot_img, cmap='gray')
-        cmapable=ax.imshow(DIC_img, interpolation='none',vmin=-max_strain,vmax=max_strain, **plot_kwargs)
-        
-        
-        cbar=plt.colorbar(cmapable,ax=ax,ticks=[-max_strain,0,max_strain])
-        cbar.ax.set_yticklabels([f'{-max_strain:.4f}',f'{0:.4f}',f'{max_strain:.4f}'],rotation=45)
-        cbar.set_label('strain ('+mode+')', rotation=270, labelpad=10)
-        for label in cbar.ax.get_yticklabels():
-            label.set_verticalalignment('baseline')
-        
-        # hide the x-y axes
-        ax.axes.xaxis.set_visible(False)
-        ax.axes.yaxis.set_visible(False)
-        return f, ax
-    
-
-    def plot_polar(self, a=[0.85, 0.5, 0.15], mode='e_vm', extrap=False, ax=None,max_strain=None, colors=['#c33124', '#f98365', '#e8a628']):
-        if ax == None:
-            f, ax = plt.subplots(1, 1, subplot_kw={'projection': 'polar'})
-        else:
-            f = ax.get_figure()
-        if type(a) != list:  # if a is a float, turn it into list
-            a = [a]
-        # create linspace of theta spanning a circle
-        n_points = 1000
-        theta = np.linspace(0, 2*pi, n_points)
-        # find strain at each of these points
-        r, _, z = self.get_value(a, theta, mode,extrap)
-
-        # plot unit circle
-        ax.plot(theta, np.ones(theta.shape), 'k')
-
-        # plot the strain coming off the unit circle at 10x magnitude
-        magnify = 10
-        if len(z.shape) > 1:
-            for n in range(z.shape[1]):
-                ax.plot(theta, 1+magnify*z[:, n],
-                        label=a[n], color=colors[n])
-            f.legend(frameon=False,loc='upper right')
-        else:
-            ax.plot(theta, 1+magnify*z, label=a)
-            f.legend(frameon=False,loc='upper right')
-        # Hide the grid and radial labels. Set the limits in radial direction
-        ax.grid(False)
-        ax.set_rticks([])
-        if max_strain == None:
-            ax.set_rlim(0, 1+magnify*z[~np.isnan(z)].max()*1.1)
-        else:#max_strain is a float
-            ax.set_rlim(0,1+magnify*max_strain)
-        
-        # creates the lines to plot
-        r = np.linspace(0, magnify)
-        theta = [n*pi/2 for n in range(4)]
-        theta.append(self.pin_angle)
-        theta.append(pi-self.pin_angle)
-        theta.append(pi+self.pin_angle)
-        theta.append(-self.pin_angle)
-
-        # plots the lines
-        for angle in theta:
-            ax.plot(angle*np.ones(r.shape), r, color='k', linewidth=0.75)
-        return f, ax
-
-
-    def plot_neutral_axis(self, ax=None, plot_min_flag=True):
-        if ax == None:  # if no axes provided, create one
-            f = plt.figure()
-            ax = plt.axes(projection='polar')
-        else:
-            f = ax.get_figure()
-            
-        # plots inner and outer diameters with thick black lines
-        a = [0, 1]
-        theta = np.linspace(0, 2*pi, 200)
-        r, theta, _ = self.get_value(a, theta)
-        theta = theta[:, 0]
-        for n in range(2):
-            ax.plot(theta, r[:, n], color='k', linewidth=3)
-
-        # gets strain distribution across the thickness for each theta value
-        a, e = self.get_strain_distribution(theta, mode='ett')
-
-        # data manipulation
-        e = e.transpose()
-        e = ma.array(e, mask=np.isnan(e))
-
-        # find where strain crosses zero
-        e_idx = [np.argwhere(np.diff(np.sign(e[i, :]))).flatten()
-                 for i in range(e.shape[0])]
-        # plots each point that is found where strain crosses zero
-        for i in range(e.shape[0]):
-            ax.plot(theta[i]*np.ones(e_idx[i].shape),
-                    self.get_r(a[e_idx[i]]), 'ro', markersize=3)
-
-        # find and plot minimum abs(strain)
-        if plot_min_flag:
-            e_idx = np.nanargmin(np.absolute(e), axis=1)
-            ax.plot(theta, self.get_r(a[e_idx]), 'b-')
-
-        # axes manipulation to get pretty plots
-        ax.set_rlim(self.get_r(0)/1.125, self.get_r(1) * 1.005)
-        ax.grid(False)
-        ax.set_rticks([])
-        ax.spines['polar'].set_visible(False)
-        return f, ax
-
-
+        f,ax = super().plot_Image(state=state, mode=mode, log_transform_flag=log_transform_flag,
+                                  max_strain=max_strain, ax=ax, **plot_kwargs)
+        return f,ax
 
 ##################################################################
-class RingPull():
-    '''
-    A class that analyzes both the DIC and the tensile data from the ring pull test. Inherits the TensileTest class.
-    Inputs:
-        LF_file - the csv file where all the load frame data and potentially image filenames are kept
-        DIC_software - the software used to run the image correlation
-        ID - the ID of the ring in mm
-        OD - the OD of the ring in mm
-        d_mandrel - the pin diameter in mm
-        W - the width of the ring in mm
-        get_geometry - a flag to tell the code if you want to run the get_geometry method on initiation
-    '''
+class TensileTest():
     
-    def __init__(self, LF_file=None,DIC_software=None, ID=None, OD=None, d_mandrel=None, W=None,get_geometry=True):
-
-        #open tkinter module for asking user inputs
-        root = tk.Tk()
-        #if inputs are not specified, ask user for the inputs
-        if type(LF_file) == type(None):
-            LF_file = filedialog.askopenfilename(title='Select Load Frame File',
-                                       initialdir=os.getcwd())
-        if type(DIC_software) == type(None):
-            DIC_software = simpledialog.askstring(title='DIC Software',
-                             prompt='Which DIC software did you use to analyze the images? VIC-2D or DICe?')
-        if type(ID) == type(None):
-            ID = simpledialog.askfloat(title='Ring ID',
-                                       prompt='What is the inner diameter of the ring in mm?')
-        if type(OD) == type(None):
-            OD = simpledialog.askfloat(title='Ring OD',
-                                       prompt='What is the outer diameter of the ring in mm?')  
-        if type(d_mandrel) == type(None):
-            d_mandrel = simpledialog.askfloat(title='Mandrel Diameter',
-                                               prompt='What is the mandrel diameter in mm?')
-        if type(W) == type(None):
-            W = simpledialog.askfloat(title='Width',
-                                               prompt='What is the ring width in mm?')
-        
-        #kill the tkinter main loop
-        root.destroy()
-        
+    def __init__(self, LF_file=None,software=None,L0=1,A_x=1):
         self.df = pd.read_csv(LF_file)
         
         self.filepath = '/'.join(LF_file.replace('\\','/').split('/')[0:-1])
 
-        for i, row in self.df.iterrows():
-            if len(row['top_img_file'].split('/')) == 1:
-                self.df.loc[i,'top_img_file'] =  self.filepath +'/'+ row['top_img_file']
-            try:
-                if len(row['side_img_file'].split('/')) == 1:
-                    self.df.loc[i,'side_img_file'] =  self.filepath +'/'+ row['side_img_file']
-            except KeyError:#No side view images in LF file
-                pass
-
-        
-
-        try:  # if there is an unlabeled column, delete
+        # if there is an unlabeled column, delete. This comes from saving a 
+        # dataframe to a csv without turning off the index
+        try:  
             self.df.drop('Unnamed: 0', axis=1, inplace=True)
         except:
             pass
 
+
         # figures out how many datapoints long the test is
         self.num_datapoints = self.df.shape[0]
 
-        # set the DIC software we are running
-        self.DIC_software = DIC_software
+        # set the software we are running
+        self.software = software
 
-        # set geometric dimensions as class attributes
-        self.ID = ID
-        self.OD = OD
-        self.d_avg = (ID+OD)/2
-        self.W = W
-        self.d_mandrel = d_mandrel
-        self.thickness = (OD-ID)/2
+        self.gauge_length = L0
+        self.A_x = A_x
 
-
-        # find gauge length
-        # L. Yegorova, et al., Description of Test Procedures and Analytical Methods, Database on the Behavior of High Burnup Fuel Rods with Zr1%Nb Cladding and UO2 Fuel (VVER Type) under Reactivity Accident Conditions, 2, U.S. Nuclear Regulatory Commission, 1999, pp. 6.16e6.19. NUREG/IA-0156, n.d.
-        k = 1
-        self.gauge_length = pi/2*(self.ID-k*d_mandrel)
-        self.pin_angle = pi/2*(1-(k*d_mandrel)/self.ID)+pi/2
-
-        # calculate stress and strain values from load-displacement and save them in the DataFrame
-        A_x = ((OD-ID)*W)
-        self.df['stress (MPa)'] = self.df['load (N)']/A_x
+        self.df['stress (MPa)'] = self.df['load (N)']/self.A_x
         self.df['eng_strain'] = self.df['displacement (mm)']/self.gauge_length
         self.df['true_strain'] = np.log(1+self.df['eng_strain'])
         self.df['true_stress'] = self.df['stress (MPa)'] * \
             (1+self.df['eng_strain'])
-        
-        
-        self.data_keep_array = None
-        self.centroid = None
-        self.scale = None
-        if get_geometry:
-            self.get_geometry()        
-        
-    def get_geometry(self):
-        try:
-            img = self.open_DIC(0)
-            plot_img = mpimg.imread(img.test_img_file)
-            idx_pts = [(img.df['x'][n],img.df['y'][n]) for n in img.df.index] 
-        except FileNotFoundError:
-            plot_img = mpimg.imread(self.df['top_img_file'].iloc[0])
-            x,y = np.meshgrid(np.arange(plot_img.shape[0]),np.arange(plot_img.shape[1]))
-            x=x.flatten()
-            y=y.flatten()
-            idx_pts = [(x[n],y[n]) for n in range(len(x))]
-        
-        f,ax = make_img_figure()
-        f.subplots_adjust(top=0.80,bottom=0.05,left=0.05,right=0.95,hspace=0.2,wspace=0.2)        
-        
-       # plot the DIC data on the image
-        ax.imshow(plot_img, cmap='gray')
-        
-        pts = UI_circle(ax,'Left click 3 points to make the outer circle.',facecolor='r')
-        pts2 = UI_circle(ax,'Left click 3 points to make the inner circle.',facecolor='b')
-        time.sleep(0.25)
-        plt.close() 
-        
-        path1 = mplPath.Path(pts[0:-1,:])
-        path2 = mplPath.Path(pts2[0:-1,:])
-                
-        inside = path1.contains_points(idx_pts)*np.invert(path2.contains_points(idx_pts))
-        self.data_keep_array = inside
-        self.centroid = np.mean(pts[0:-1,:],axis=0)
-        self.scale = np.mean(np.amax(pts[0:-1,:],axis=0) - np.amin(pts[0:-1,:],axis=0))/self.OD #pixels per mm
-
-    def open_DIC(self, n, overwrite=False, save_DIC=False, rtheta=False):
-        # find filename for the image
-        img_file = self.df['top_img_file'].iloc[n]
-        output_filename = img_file.split('.')[0]+'.pkl'
-        try:  # try opening saved .pkl file. If not, analyze DIC data
-            if not overwrite:
-                with open(output_filename, 'rb') as handle:
-                    img = pickle.load(handle)
-            else:
-                assert False
-        except (FileNotFoundError, AssertionError,PermissionError):
-            # open DIC_Image
-            img = DIC_image(test_img = img_file, init_img = self.df['top_img_file'][0], 
-                            DIC_software = self.DIC_software, 
-                            ID=self.ID, OD=self.OD, d_mandrel=self.d_mandrel,
-                            data_keep_array=self.data_keep_array,
-                            scale = self.scale,
-                            centroid = self.centroid)
-        #calculate the strains in the radial and hoop direction
-        if rtheta:
-            try: 
-                img.df['ett']
-            except:
-                img.analyze_radial_strains()
-        # Save .pkl file if we want to save it.
-        if save_DIC:
-            if os.path.exists(output_filename):
-                os.remove(output_filename)
-            with open(output_filename, 'w+b') as handle:
-                pickle.dump(img, handle, protocol=pickle.HIGHEST_PROTOCOL)
-        return img
-    
-    def analyze_single(self, n, ext_theta=None, ext_mode='x',open_kwargs={'overwrite':False,'save_DIC':False,'rtheta':False}):
-        if not ext_theta:
-            ext_theta=((self.pin_angle-pi/2,self.pin_angle),
-                       (-self.pin_angle,-self.pin_angle+pi/2))
-        # open DIC_Image for image index n
-        img = self.open_DIC(n, **open_kwargs)
-        # get values from DIC_Image methods and append to DataFrame
-        self.df.loc[n, 'adj_displ'] = img.find_displacement()
-        # self.df.loc[n, 'dist_between_gauge'] = img.get_dist_between_gauge()
-        self.df.loc[n, 'adj_eng_strain'] = self.df.loc[n,'adj_displ']/self.gauge_length
-        self.df.loc[n, 'adj_true_strain'] = np.log(1+self.df.loc[n, 'adj_eng_strain'])
-
-        try:
-            self.df.loc[n, 'extensometer 1'] = img.digital_extensometer(ext_theta,ext_mode)
-        except:
-            for j,theta_i in enumerate(ext_theta):
-                self.df.loc[n, 'extensometer '+str(j)] = img.digital_extensometer(theta_i,ext_mode)
-                
-    def analyze_DIC(self, ext_theta=None, ext_mode='x',open_kwargs={'overwrite':False,'save_DIC':False,'rtheta':False}):
-        #create extensomters as an attrbute for later reference of which extensometer is what
-        self.extensometers = ext_theta
-        
-        # run through all the frames in the data and analyze them
-        for n in range(len(self.df['top_img_file'])):
-            self.analyze_single(n, ext_theta, ext_mode,open_kwargs)
-            print(str(n) + '/' + str(len(self.df['top_img_file'])) + ' analyzed')
-        self.save_data()
-
-    def get_a(self, r):
-        # from a radial position, return the value of a
-        r = np.array(r)
-        return (2*r-self.ID)/(self.OD-self.ID)
-
-    def get_r(self, a):
-        # from an a value, get radial position
-        a = np.array(a)
-        return (a*self.OD+(1-a)*self.ID)/2
-
-    def get_value(self, n, a, theta, mode='e_vm',extrap=False):
-        # get the strain values for each image in the test
-        z = [self.open_DIC(n).get_value(a, theta, mode, extrap)[2]
-             for n in range(len(self.images_list))]
-        # create a meshgrid of r and theta values
-        r, theta, _ = self.open_DIC(0).get_value(a, theta, mode,extrap)
-        return r, theta, z
-    
-    def get_side_image_angle(self,n,side_img_file=None):
-        root = tk.Tk()
-        if side_img_file == None: # else we assume side_img_file is a string with the full filepath
-            side_img_file = filedialog.askopenfile(title='Select Side View Image',
-                                                   initialdir = '/'.join(self.df['side_img_file'][n].split('/')[0:-1]),
-                                                   initialfile=self.df['side_img_file'][n].split('/')[-1])
-            side_img_file = side_img_file.name
-        root.destroy()
-        
-        f,ax = make_img_figure()
-        f.subplots_adjust(top=0.80,bottom=0.05,left=0.05,right=0.95,hspace=0.2,wspace=0.2)
-        plot_img = mpimg.imread(side_img_file)
-    
-        # plot the image and hide the axes
-        ax.imshow(plot_img, cmap='gray')
             
+    def adjust_displacements(self, x1,y1,x2,y2,ext_mode='norm'):
+        self.df['adj_displ'] = [self.digital_extensometer(x1,y1,x2,y2,ext_mode) for n in range(self.num_datapoints)]
+        self.df['adj_eng_strain'] = self.df['adj_displ']/self.gauge_length
+        self.df['adj_true_strain'] = np.log(1+self.df['adj_eng_strain'])
+
+    def process_stress_strain_curve(self,plot_flag = False):
+        """
+        Description
+        -----------
+        Analyzes the ring pull curve as if it were a tensile stress strain 
+        curve.  Returns similar outputs as you would get from a tensile 
+        analysis.    
+
+        Parameters
+        ----------
+        plot_flag : bool, optional
+            Flag for if the algorithm should plot the final graph. The 
+            default is False
         
-        #get scale from the side image
-        #don't do if scale is already set
-        if not hasattr(self,'side_view_scale'):
-            prompt = 'Left click 2 points to define the ring thickness.'
-            pts = UI_get_pts(prompt=prompt,n=2)
-            pts = np.array(pts)
-            self.side_view_scale = np.diff(pts[:,1])/self.W #pixels per mm
+        Returns
+        -------
+        true_modulus : float
+            The linear slope (quasi-elastic modulus) of the ring pull curve. 
+            If the user inputs a different value to correct the curve, this 
+            new value will be returned.
+        YS : float
+            The 0.2% offset strength that is calculated.
+        UTS : float
+            The maximum strength the material saw.
+        eps_u : float
+            uniform elongation.
+        eps_nu : float
+            non-uniform elongation.
+        eps_total : float
+            total elongation.
+        toughness : float
+            toughness.
+
+        """
         
-        #get centroid of the ring
-        #don't do if center is already set
-        if not hasattr(self,'side_view_center'):
-            prompt = 'Left click 2 points to define the left and right edges of either the ring or the mandrels.'
-            pts = UI_get_pts(prompt=prompt,n=2)
-            pts = np.array(pts)        
-            self.side_view_center=np.mean(pts[:,0])
 
-        #get point where you are trying to locate the theta
-        prompt = 'Left click points on the ring to find theta.'
-        pts = UI_get_pts(prompt=prompt)
-        pts = np.array(pts)
-        side_view_test_point=pts[:,0]     
-    
-        #close side image plot
-        plt.close(f)
-        
-        #if get_geometry has not been run yet
-        if self.scale is None:
-            self.get_geometry()
-        
-        #calc the x distance in mm from the side view centroid to the test point
-        side_view_distance =  (side_view_test_point - self.side_view_center)/self.side_view_scale
-        
-        #calc the x pixel location from the top view centroid to the test point
-        x_loc = side_view_distance * self.scale+self.centroid[0] # mm * pixels/mm = pixel
-                
-        #get point where you are trying to locate the theta
-        f,ax = make_img_figure()
-        f.subplots_adjust(top=0.80,bottom=0.05,left=0.05,right=0.95,hspace=0.2,wspace=0.2)
-        plot_img = mpimg.imread(self.df['top_img_file'][n])
-        ax.imshow(plot_img, cmap='gray')
-        [plt.axvline(x) for x in x_loc]
-        prompt = 'Left click points on the ring where the line intersects with the outer diameter.'
-        pts = UI_get_pts(prompt=prompt)
-        plt.close(f)
-
-        
-        img= self.open_DIC(n)
-        a = 1
-        theta = np.linspace(0,2*pi,361)
-            
-        x = img.get_value(a,theta,mode='x',extrap=True)[2]
-        y = img.get_value(a,theta,mode='y',extrap=True)[2]
-
-        x_pixel = x*self.scale
-        y_pixel = y*self.scale      
-
-
-        idx_list = [find_nearest_idx(x_pixel,y_pixel,pts[i][0],pts[i][1]) for i in range(len(pts))]
-
-        # idx1 = find_nearest_idx(x_pixel,y_pixel,pts[0][0],pts[0][1])
-        # idx2 = find_nearest_idx(x_pixel,y_pixel,pts[1][0],pts[1][1])
-
-        return [theta[idx] for idx in idx_list]
-
-    def process_stress_strain_curve(self):
         y = self.df['stress (MPa)']
         try:  # try to use DIC adjusted strain. if not, use regular strain
             x = self.df['adj_eng_strain']
         except:
             x = self.df['eng_strain']
         
+        f,ax= make_figure()
+        ax.plot(x,y)
         prompt = 'Left click 2 points to define the elastic region.'
-        idx = ask_ginput(2,x,y,prompt )
-        
-        
+        pts = UI_line(ax,prompt)
+        pts = [(pts[0,0],pts[0,1]),(pts[1,0],pts[1,1])]
+        idx = [find_nearest_idx(x,y,pt[0],pt[1]) for pt in pts]
+        print(idx)
+        plt.close(f)
         c = np.polynomial.polynomial.polyfit(x[idx[0]:idx[1]], y[idx[0]:idx[1]], 1)
         calc_modulus = c[1]
-
+        
         # ask user to specify new modulus which we will correct the curve to meet
         root = tk.Tk()
         true_modulus = simpledialog.askfloat(title='True Modulus',
@@ -988,97 +1295,85 @@ class RingPull():
         root.destroy()
         true_modulus = true_modulus*1000
         
-        # correct engineering strain to fix the curve
+        # correct equivalent strain to fix the curve
         x = (x + c[0]/c[1] - y*(1/c[1]-1/true_modulus))
         
         # moving average of the curves for proper YS location
         N = 25
         x_smooth = np.convolve(x, np.ones(N)/N, mode='valid')
         y_smooth = np.convolve(y, np.ones(N)/N, mode='valid')
+        
 
         # find YS from 0.2% offset
         YS_idx = np.nanargmin(np.absolute(y_smooth-true_modulus*(x_smooth-0.002)))
         YS = y_smooth[YS_idx]
+        
         # find UTS
         UTS_idx = np.nanargmax(y)
         UTS = np.nanmax(y)
         eps_u = x[UTS_idx]-UTS/true_modulus
         # find elongation at fracture
-        eps_total = x.iloc[-1]-y.iloc[-1]/true_modulus
+        eps_total = x.dropna().iloc[-1]-y.dropna().iloc[-1]/true_modulus
         eps_nu = eps_total-eps_u
 
         # Find Area under curve (toughness)
         toughness = integrate.trapezoid(y, x)
-
+        
+        if plot_flag:
+            f,ax = make_figure()
+            ax.plot(x,y)
+            ax.plot(np.array([0,UTS])/true_modulus,[0,UTS],'--')
+            ax.plot(x_smooth[YS_idx],y_smooth[YS_idx],'or')
+            ax.plot(x[UTS_idx],y[UTS_idx],'ob')
+            ax.plot(eps_u + np.array([0,UTS])/true_modulus,[0,UTS],'--')
+            ax.plot(eps_total + np.array([0,y.dropna().iloc[-1]])/true_modulus,[0,y.dropna().iloc[-1]],'--')
+            ax.set_xlabel('Equivalent Strain [mm/mm]')
+            ax.set_ylabel('Equivalent Stress [MPa]')
+       
         return true_modulus, YS, UTS, eps_u, eps_nu, eps_total, toughness
-    
-    
-    def plot_side_img(self,n, ax=None):
-        f,ax = make_figure(ax) # if no axes provided, create one
-        plot_img = mpimg.imread(self.df['side_img_file'][n]) 
-        ax.imshow(plot_img, cmap='gray')
-        # hide the x-y axes
-        ax.axes.xaxis.set_visible(False)
-        ax.axes.yaxis.set_visible(False)
-        return f,ax
-    
+
+    def open_Image(self, n):
+        """
+        Description
+        -----------
+        opens the DIC_Image class for the index defined by n.
+
+        Parameters
+        ----------
+        n : int
+            index for the image to open
+            
+        Returns
+        -------
+        img : DIC_Image
+            The DIC_Image that was requested.
+
+        """
         
-    def plot_strain_distribution(self, n, theta=pi/2, mode='ett',extrap=False, ax=None,
-                                 fill=False,  fill_colors = ['#F47558', '#89D279'], 
-                                 plot_kwargs={'color': 'k'}):
-        f, ax = make_figure(ax)
-
-        # open DIC_Image
-        img = self.open_DIC(n)
-        # plot the strain distribution
-        a, e = img.get_strain_distribution(theta, mode, extrap)
+        # find filename for the image
+        img_file = self.df['top_img_file'].iloc[n]
         
-        # plot the strain distribution
-        ax.plot(a, e, **plot_kwargs)
-        if fill:
-            # only fills if fill=True and if it knows which to fill
-            if e.shape[1] > 1:
-                print('Cannot fill with multiple lines. Skipping this argument.')
-            else:
-                # fills the plot with appropriate tension/compression fill colors
-                ax.fill_between(a[[e >= 0][0][:, 0]], e[e >= 0],
-                                color=fill_colors[0], label='tension')
-                ax.fill_between(a[[e <= 0][0][:, 0]], e[e <= 0],
-                                color=fill_colors[1], label='compression')
-        # modify the axis parameters to create pretty plots
-        ax.set_xlim(0, 1)
-        ax.set_ylabel('strain [mm/mm]')
-        ax.axhline(0,color='k',ls='--',lw=.5)
-        ax.tick_params(axis='x', which='minor', direction='in', top=False, bottom=False, length=2)
-        ax.set_xticks([0, 1])
-        ax.set_xticklabels(['ID', 'OD'])
-        ax.legend(frameon=False)
-        return f, ax
+        # open Image
+        img = Image_Base(test_img = img_file, init_img = self.df['top_img_file'][0], 
+                        software = self.software,centroid = self.centroid,scale = self.scale)
+        return img
 
-    def plot_stress_strain(self, ax=None, shift=False,
-                           x_axis='eng_strain', y_axis='stress (MPa)',
-                           plot_kwargs={'linestyle': '-','linewidth':1,'marker':'o','markersize': 1.5}):
- 
-        f,ax = make_figure(ax)# if no axes provided, create one
-
-        # shifts the data by as many frames as you want.
-        # Or can shift so it is lined up with UTS
-        if shift == True:
-            shift = self.df['stress (MPa)'].argmax()
-        elif type(shift) == int or type(shift) == float:
-            shift = int(shift)
-        else:
-            shift = 0
-        x = self.df[x_axis]
-        y = self.df[y_axis]
-         
-        x = x-x[shift]
-
-        ax.plot(x, y, **plot_kwargs)
-        ax.legend(frameon=False)
-        return f, ax
-    
     def save_data(self):
+        """
+        Description
+        -----------
+        Asks the user to save the updated file as a csv.     
+
+        Parameters
+        ----------
+        None.
+
+        Returns
+        -------
+        None.
+
+        """
+        
         root = tk.Tk()
         f = filedialog.asksaveasfile(title='Save Load Frame File As',
                                      filetypes=[('CSV file','.csv')],
@@ -1093,11 +1388,298 @@ class RingPull():
             # save data to output file. 
             self.df.to_csv(f.name, index=False)
             print('Analyzed data saved to the following file:')
-            print(f.name)    
+            print(f.name)
+
+    def plot_stress_strain(self, ax=None, shift=False,
+                           x_axis='eng_strain', y_axis='stress (MPa)',n=None,
+                           **plot_kwargs):
+        """
+        Description
+        -----------
+        Plots the ring pull stress strain curves. 
+        
+
+        Parameters
+        ----------
+        ax : matplotlib.axes, optional
+            The matplotlib axes object to modify. The default is None.
+        shift : bool, int, optional
+            Integer number for amount of datapoints to shift the graph. If 
+            True, shifts the plot to the maximum value. The default is False.
+        x_axis : str, optional
+            The column of the datafarame to plot on the x-axis. The default is 
+            'eng_strain'.
+        y_axis : str, optional
+            The column of the dataframe to plot on the y-axis. The default is 
+            'stress (MPa)'.
+        n : int, optional
+            the index of the row in the test dataframe. If not None, will plot 
+            this point as a large black circle
+        plot_kwargs : dict, optional
+            Dictionary of key word arguments to pass to the matplotlib plot 
+            function. The default is 
+            {'linestyle': '-','linewidth':1,'marker':'o','markersize': 1.5}.
+
+        Returns
+        -------
+        f : matplotlib.figure
+            The created figure for the plot
+        ax : matplotlib.axes
+            The created axes for the plot
+
+        """
+        
+        default_kwargs = {'linestyle': '-','linewidth':1,'marker':'o','markersize': 1.5}
+        plot_kwargs = { **default_kwargs, **plot_kwargs }
+        f,ax = make_figure(ax)
+
+        # shifts the data by as many frames as you want.
+        # Or can shift so it is lined up with UTS
+        if type(shift) == int or type(shift) == float:
+            shift = int(shift)
+        elif shift == True:
+            shift = self.df['stress (MPa)'].argmax()
+        else:
+            shift = 0
+        x = self.df[x_axis]
+        y = self.df[y_axis]
+         
+        x = x-x[shift]
+
+        ax.plot(x, y, **plot_kwargs)
+        if n:
+            ax.plot(x[n],y[n],'ok')
+        ax.legend()
+        return f, ax
+         
+    def plot_Image(self,n,**kwargs):
+        f,ax = self.open_Image(n).plot_Image(**kwargs)
+        return f,ax
+
+class RingPull(TensileTest):
+    '''
+    Description
+    -----------
+    A class that contains analysis procedures for both load-displacement and 
+    point cloud data. This is a base class for classes that involve MOOSE 
+    simulations and experimental data (Load Frame + DIC).
+    '''
+    def __init__(self, LF_file=None,software=None, ID=None, OD=None, d_mandrel=None, W=None,get_geometry_flag=False):
+        """
+        Description
+        -----------
+        Initializes the RingPull class with important geometry features and 
+        data.
+
+        Parameters
+        ----------
+        LF_file : str, optional
+            Filepath for the csv file where all the load frame data and image 
+            filenames are kept. The default is None.
+        software : str, optional
+            The software used to generate the data. Options are 'VIC-2D 6', 
+            'VIC 2D 7', 'DICe', and 'MOOSE' . The default is None.
+        ID : float, optional
+            Inner diameter of the ring in mm. The default is None.
+        OD : float, optional
+            Outer dimater of the ring in mm. The default is None.
+        d_mandrel : float, optional
+            Mandrel dimater in mm. The default is None.
+        W : float, optional
+            Width (z-directional dimension) of the ring in mm. The default is None.
+        get_geometry_flag : bool, optional
+            flag for if the get_geometry function should be run upon 
+            initialization. The default is True.
+        
+        Returns
+        -------
+        None.
+
+        """
+        
+        # set geometric dimensions as class attributes
+        self.ID = ID
+        self.OD = OD
+        self.d_avg = (ID+OD)/2
+        self.W = W
+        self.d_mandrel = d_mandrel
+        self.thickness = (OD-ID)/2
+
+        # find gauge length
+        # L. Yegorova, et al., Description of Test Procedures and Analytical Methods, Database on the Behavior of High Burnup Fuel Rods with Zr1%Nb Cladding and UO2 Fuel (VVER Type) under Reactivity Accident Conditions, 2, U.S. Nuclear Regulatory Commission, 1999, pp. 6.16e6.19. NUREG/IA-0156, n.d.
+        k = 1
+        # gauge_length = pi/2*(self.ID-k*d_mandrel)
+        gauge_length = pi/2*((self.ID+self.OD)/2-k*d_mandrel)
+        self.pin_angle = pi/2*(1-(k*d_mandrel)/self.ID)+pi/2
+
+        # calculate cross sectional area
+        A_x = ((OD-ID)*W)
+        
+        super().__init__(LF_file,software,gauge_length,A_x)
+        # self.Image_class = Ring_Image  
+        
+        for i, row in self.df.iterrows():
+            if len(row['top_img_file'].split('/')) == 1:
+                self.df.loc[i,'top_img_file'] =  self.filepath +'/'+ row['top_img_file']
+            try:
+                if len(row['side_img_file'].split('/')) == 1:
+                    self.df.loc[i,'side_img_file'] =  self.filepath +'/'+ row['side_img_file']
+            except KeyError:#No side view images in LF file
+                pass  
+            
+        self.OD_path = None
+        self.ID_path = None
+
+        self.centroid = None
+        self.scale = None
+        if get_geometry_flag:
+            self.get_geometry()  
+
+    def get_a(self, r):
+        return self.open_Image(0).get_a(r)        
+
+    def get_r(self, a):
+        return self.open_Image(0).get_r(a)   
     
+    def open_Image(self, n):
+        # find filename for the image
+        img_file = self.df['top_img_file'].iloc[n]
+        
+        # open Image
+        img = Ring_Image(test_img = img_file, init_img = self.df['top_img_file'][0], 
+                        software = self.software, 
+                        ID=self.ID, OD=self.OD, d_mandrel=self.d_mandrel,
+                        OD_path=self.OD_path,ID_path=self.ID_path,
+                        scale = self.scale,
+                        centroid = self.centroid)
+        return img
+    
+    def plot_strain_distribution(self, n, theta=pi/2, mode='ett',extrap=False, ax=None, **plot_kwargs):
+        """
+        Description
+        -----------
+        Plots the strain distribution across the thickness of the ring. 
+        Parameters
+        ----------
+        n : TYPE
+            DESCRIPTION.
+        theta : float, np.array, optional
+            The value of theta to get strain value from. The default is pi/2.
+        mode : str, optional
+            The type of strain to return. The default is 'ett'.
+        extrap : TYPE, optional
+            Whether or not to use extrapolation to get values. If False, the 
+            function returns NaN values where it is not defined. The default 
+            is False.
+        ax : matplotlib.axes, optional
+            The matplotlib axes object to modify. The default is None.
+        fill : bool, optional
+            Flag for if the area unde the curve should be filled. The default is False.
+        fill_colors : list of 2 colors, optional
+            List of col. The default is ['#F47558', '#89D279'].
+        plot_kwargs : dict, optional
+            Dictionary of colors. The default is color = k.
+        Returns
+        -------
+        f : matplotlib.figure
+            The created figure for the plot
+        ax : matplotlib.axes
+            The created axes for the plot
+        """
+        default_kwargs = {'color': 'k'}
+        plot_kwargs = { **default_kwargs, **plot_kwargs }
+        f,ax = make_figure(ax)
+
+        # open DIC_Image
+        img = self.open_Image(n)
+        # plot the strain distribution
+        a, e = img.get_strain_distribution(theta, mode, extrap)
+        
+        # plot the strain distribution
+        ax.plot(a, e, **plot_kwargs)
+
+        # modify the axis parameters to create pretty plots
+        ax.set_xlim(0, 1)
+        ax.set_ylabel('strain [mm/mm]')
+        ax.axhline(0,color='k',ls='--',lw=.5)
+        ax.tick_params(axis='x', which='minor', direction='in', top=False, bottom=False, length=2)
+        ax.set_xticks([0, 1])
+        ax.set_xticklabels(['ID', 'OD'])
+        ax.legend()
+        f.subplots_adjust(top=0.965,bottom=0.080,left=0.17,right=0.95,hspace=0.2,wspace=0.2)
+        return f, ax
+
+    def get_geometry(self):
+        """
+        Description
+        -----------
+        Function that opens the initial image and has the user click points to 
+        make the ring geometry. Uses this to define the scale and centroid of 
+        the ring.
+
+        Parameters
+        ----------
+        None.
+
+        Returns
+        -------
+        None.
+
+        """
+    
+        img = self.open_Image(0)
+        plot_img = mpimg.imread(img.test_img_file)
+
+        f,ax = make_img_figure()
+        f.subplots_adjust(top=0.80,bottom=0.05,left=0.05,right=0.95,hspace=0.2,wspace=0.2)        
+        
+       # plot the DIC data on the image
+        ax.imshow(plot_img, cmap='gray')
+        
+        pts = UI_circle(ax,'Left click 3 points to make the outer circle.',facecolor='r')
+        pts2 = UI_circle(ax,'Left click 3 points to make the inner circle.',facecolor='b')
+        time.sleep(0.25)
+        plt.close() 
+        
+        self.OD_path = mplPath.Path(pts[0:-1,:])
+        self.ID_path = mplPath.Path(pts2[0:-1,:])
+        
+        self.centroid = np.mean(pts[0:-1,:],axis=0)
+        self.scale = np.mean(np.amax(pts[0:-1,:],axis=0) - np.amin(pts[0:-1,:],axis=0))/self.OD #pixels per mm
+
+    def plot_top_img(self,n, ax=None,top_img_zoom = ((None,None),(None,None)),**plot_kwargs):
+        default_kwargs = {'max_strain':0.5}
+        plot_kwargs = { **default_kwargs, **plot_kwargs }
+        
+        f,ax = self.open_Image(n).plot_Image(ax=ax,**plot_kwargs)
+        ax.set_xlim(top_img_zoom[0])
+        ax.set_ylim(top_img_zoom[1])        
+        return f,ax
+
+    def plot_side_img(self,n, ax=None,side_img_zoom = ((None,None),(None,None)),side_view_col='side_img_file'):
+        f,ax = make_img_figure(ax) # if no axes provided, create one
+        plot_img = mpimg.imread(self.df['side_img_file'][n]) 
+        ax.imshow(plot_img, cmap='gray')
+        ax.set_xlim(side_img_zoom[0])
+        ax.set_ylim(side_img_zoom[1])
+        return f,ax
+    
+    def plot_top_side_img(self,n,top_img_zoom = ((None,None),(None,None)),side_img_zoom = ((None,None),(None,None)),side_view_col='side_img_file'):
+        f = plt.figure(figsize=(4.5,3))
+        f.subplots_adjust(top=0.93,bottom=0.00,left=0.00,right=0.925,hspace=0.2,wspace=0.2)
+        gs = GridSpec(8,5,wspace=0.0010,hspace=0.100)
+        ax1 = f.add_subplot(gs[0:6,0:5])
+        ax2 = f.add_subplot(gs[6:8,0:5])
+        self.plot_top_img(n,ax1,top_img_zoom)
+        self.plot_side_img(n,ax2,side_img_zoom,side_view_col)
+        return f, [ax1,ax2]
+
 ##################################################################
 
-if __name__ == '__main__':  # only run if this script is the main script
+if __name__ == '__main__':  # only runs if this script is the main script
     print('Please go to example script, RPSA_example.py')
+
+
+
 
 
