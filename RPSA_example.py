@@ -79,13 +79,13 @@ print(type(img)==Ring_Image)
 ## again, this data is pulled in from the csv file. You can see the data here:
 df2 = img.df
 
-#%%
+
 ## Plots the DIC results overlayed on the image
-img.plot_DIC(state='reference',pixel_size=5)
-img.plot_DIC(state='deformed',pixel_size=5)
+img.plot_Image(state='reference')
+img.plot_Image(state='deformed')
 
 ## You can also plot strains in polar coordinates.
-img.plot_DIC(state='deformed',mode='ett',pixel_size=5)
+img.plot_Image(state='deformed',mode='ett')
 
 
 
