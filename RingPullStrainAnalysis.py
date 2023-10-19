@@ -293,6 +293,8 @@ def define_circle(p1, p2, p3):
     radius = np.sqrt((cx - p1[0])**2 + (cy - p1[1])**2)
     return ((cx, cy), radius)
 
+
+
 def UI_get_pts(prompt,n=None):
     '''
     Description
@@ -383,6 +385,82 @@ def UI_circle(ax,prompt,facecolor,num = 50):
             plt.draw()
             #ask for new circle
     return np.array(pts)
+
+def define_ellipse(pts):
+    '''
+    https://stackoverflow.com/questions/47873759/how-to-fit-a-2d-ellipse-to-given-points
+    '''
+    
+    pts=np.array(pts)
+    x = pts[:,0]
+    y = pts[:,1]
+
+    A = np.vstack(([x**2, x*y, y**2, x, y])).transpose()
+    b = np.ones_like(x)
+
+    ans = np.linalg.lstsq(A, b,rcond=None)[0].squeeze()
+    ans = np.append(ans,-1)
+    print(ans)
+
+    return ans
+
+
+def UI_ellipse(ax,prompt):
+    '''
+    Description
+    -----------
+    User interface to get 5 points and make an ellipse out of them. Then plots
+    this ellipse on the given graph. This function calls UI_get_pts to find 
+    the points.
+
+    Parameters
+    ----------
+    ax : matplotlib.axes
+        The axes to select and plot the circle on
+        
+    prompt : str
+        The prompt to the user describing the problem and which points to select.
+        This gets put in the title of the plot. A description of how to select 
+        the points is appended to the prompt.
+    facecolor : matplotlib color input
+        The color to draw the ellipse out of. 
+    num : int, optional
+        number of points to return to create the circle. The default is 50.
+    
+    Returns
+    -------
+    pts :  num x 2 array of floats
+        array of (x,y) points that create a circle. the number of points is
+        based off the input parameter, num +1. The first and last
+        values of the array are the same in order to complete the circle.
+    '''
+    while True:
+        pts = UI_get_pts(prompt)
+
+        ans = define_ellipse(pts)
+        
+        X = np.linspace(*ax.get_xlim(),num=1000)
+        Y = np.linspace(*ax.get_ylim(),num=1000)
+        X,Y = np.meshgrid(X,Y)
+        
+        Z = ans[0]*X**2 + ans[1] *X*Y + ans[2]*Y**2 + ans[3]*X + ans[4]*Y + ans[5]
+        cs = ax.contour(X,Y,Z,levels=[0],colors='b',linewidths=2)
+        
+        ellipse_path = cs.collections[0].get_paths()[0]
+        ellipse_pts = ellipse_path.vertices
+        
+        plt.title('Is this acceptable? Click to continue or hit enter to retry.')
+        plt.draw()
+        my_bool = plt.waitforbuttonpress()
+        if not my_bool:#if mouse click
+            break
+        else: #if keyboard button
+            cs.collections[0].remove()
+            plt.draw()
+            #ask for new circle
+    return ellipse_pts 
+
+
 
 def UI_polygon(ax,prompt,facecolor):
     '''
@@ -973,7 +1051,10 @@ class Ring_Image(Image_Base):
         # create a meshgrid of a and theta values that encompasses the input a and theta values
         if mode not in self.df.columns:#mode is in df
             self.analyze_radial_strains()
-
+        
+        if type(a) ==int:
+            a = a + np.zeros(theta.shape)
+        
         r = self.get_r(a)
         # choose strain value to use
         z = self.df[mode]
@@ -1679,6 +1760,10 @@ class RingPull(TensileTest):
 if __name__ == '__main__':  # only runs if this script is the main script
     print('Please go to example script, RPSA_example.py')
 
+# import contextlib
+# with open('E:\\Projects\\RingPull\\RPSA\\RPSA_example\\docs.md', 'w') as f:
+#     with contextlib.redirect_stdout(f):
+#         help(RingPullStrainAnalysis)
 
 
 
