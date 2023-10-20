@@ -628,8 +628,8 @@ class Image_Base:
     Base class for handling and calculating strains on a dogbone sample during tensile testing.
     '''
     
-    def __init__(self, test_img, init_img, software='VIC-2D',centroid = (0,0),scale=1):
-        csv_file = test_img.split('.')[0]+'.csv'
+    def __init__(self, test_img, init_img, software='VIC-2D',centroid = np.array((0,0)),scale=1):
+        csv_file = test_img.split('.tif')[0]+'.csv'
         self.df = pd.read_csv(csv_file)        
         # rename column names to standard. VIC 2D puts excess spaces, which first need to be stripped.
         column_rename_dict2 = {key:key.strip() for key in self.df.columns }
@@ -649,7 +649,7 @@ class Image_Base:
                                   '"u"':'u','"v"':'v',
                                   '"exx"':'exx','"eyy"':'eyy','"exy"':'exy',
                                   '"e1"':'e1','"e2"':'e2',
-                                  '"e_vonmises"':'e_vm','"sigma"':'sigma'                }
+                                  '"e_vonmises"':'e_vm','"sigma"':'sigma'}
         elif software=='DICe':
             column_rename_dict = {'COORDINATE_X':'x','COORDINATE_Y':'y',
                                   'DISPLACEMENT_X':'u','DISPLACEMENT_Y':'v',
@@ -669,17 +669,12 @@ class Image_Base:
         
         self.centroid = centroid
 
-        if type(scale) != type(None):
-            # convert from pixels to mm
-            self.scale = scale  # pixels/mm        
-            self.df[['x', 'y', 'u', 'v', 'x_def', 'y_def']] = self.df[['x', 'y', 'u', 'v', 'x_def', 'y_def']].apply(
-                lambda x: x/self.scale)        
-        else:
-            self.scale = 1#default value if there is no scale
+        self.scale = scale  # pixels/mm        
+        self.df[['x', 'y', 'u', 'v', 'x_def', 'y_def']] = self.df[['x', 'y', 'u', 'v', 'x_def', 'y_def']].apply(
+            lambda x: x/self.scale)
         
-        if type(centroid) != type(None):
-            self.centroid_pixel = centroid.astype(int)
-            self.centroid = centroid/self.scale
+        self.centroid_pixel = centroid
+        self.centroid = centroid/self.scale
             
         self.test_img_file = test_img
         self.init_img_file = init_img            
@@ -1285,6 +1280,15 @@ class TensileTest():
     def __init__(self, LF_file=None,software=None,L0=1,A_x=1):
         self.df = pd.read_csv(LF_file)
         
+        for i, row in self.df.iterrows():
+            if len(row['top_img_file'].split('/')) == 1:
+                self.df.loc[i,'top_img_file'] =  self.filepath +'/'+ row['top_img_file']
+            try:
+                if len(row['side_img_file'].split('/')) == 1:
+                    self.df.loc[i,'side_img_file'] =  self.filepath +'/'+ row['side_img_file']
+            except KeyError:#No side view images in LF file
+                pass  
+        
         self.filepath = '/'.join(LF_file.replace('\\','/').split('/')[0:-1])
 
         # if there is an unlabeled column, delete. This comes from saving a 
@@ -1436,7 +1440,7 @@ class TensileTest():
         
         # open Image
         img = Image_Base(test_img = img_file, init_img = self.df['top_img_file'][0], 
-                        software = self.software,centroid = self.centroid,scale = self.scale)
+                        software = self.software)
         return img
 
     def save_data(self):
@@ -1598,15 +1602,6 @@ class RingPull(TensileTest):
         
         super().__init__(LF_file,software,gauge_length,A_x)
         # self.Image_class = Ring_Image  
-        
-        for i, row in self.df.iterrows():
-            if len(row['top_img_file'].split('/')) == 1:
-                self.df.loc[i,'top_img_file'] =  self.filepath +'/'+ row['top_img_file']
-            try:
-                if len(row['side_img_file'].split('/')) == 1:
-                    self.df.loc[i,'side_img_file'] =  self.filepath +'/'+ row['side_img_file']
-            except KeyError:#No side view images in LF file
-                pass  
             
         self.OD_path = None
         self.ID_path = None
