@@ -8,13 +8,13 @@ output 2-dimensional mesh of strain data specific to a gaugeless Ring Pull test
 and analyzing it for parameters of interest. RPSA also allows input load frame 
 data that is synchronized with the DIC images.
 
-v1.3
+v1.4
 
 Created by:
     Peter Beck
     pmbeck@lanl.gov
 Updated:
-    03-Oct-2023
+    20-Oct-2023
 
 
 General notes on naming conventions and coding practices:
@@ -35,6 +35,11 @@ General notes on naming conventions and coding practices:
             - Python 3.8.8 (installed via Anaconda)
             - Spyder 4, with the setting:
                 - IPython console -> Graphics -> Backend: Automatic
+
+To Do:
+    - calculate mean, stdev, histogram, from user defined polygon of points. 
+        This will help error calculations.
+
 '''
 
 
@@ -45,6 +50,7 @@ import imageio
 import copy
 import seaborn
 seaborn.set_palette('Set1') #set color scheme
+
 
 #numpy imports
 import numpy as np
@@ -80,6 +86,11 @@ import tkinter as tk
 from tkinter import simpledialog,filedialog
 
 from matplotlib.gridspec import GridSpec
+
+
+
+
+
 
 
 def make_figure(ax=None):
@@ -490,7 +501,7 @@ def UI_polygon(ax,prompt,facecolor):
         values of the array are the same in order to complete the polygon.
     '''
     while True:
-        pts = UI_get_pts(prompt,1000)
+        pts = UI_get_pts(prompt,None)
         pts.append(pts[0])
         pts = np.array(pts)
         my_polygon = Polygon(pts, True, facecolor=facecolor,alpha = 0.2)
@@ -729,10 +740,10 @@ class Image_Base:
         return z
 
     def digital_extensometer(self, x1,y1,x2,y2,ext_mode='norm'):
-        x_def1 = self.get_value(x1,y1,mode='x_def')
-        y_def1 = self.get_value(x1,y1,mode='y_def')
-        x_def2 = self.get_value(x2,y2,mode='x_def')
-        y_def2 = self.get_value(x2,y2,mode='y_def')
+        x_def1 = self.get_value(x1/self.scale ,y1/self.scale, mode='x_def')
+        y_def1 = self.get_value(x1/self.scale, y1/self.scale, mode='y_def')
+        x_def2 = self.get_value(x2/self.scale, y2/self.scale, mode='x_def')
+        y_def2 = self.get_value(x2/self.scale, y2/self.scale, mode='y_def')
         
         if ext_mode =='norm':
             pass
@@ -742,8 +753,8 @@ class Image_Base:
         elif ext_mode=='y':
             x_def1 = 0
             x_def2 = 0
-            
-        vect=np.array((x1-x2,y1-y2))
+        
+        vect=np.array((x_def1-x_def2,y_def1-y_def2))
         disp = np.linalg.norm(vect,axis=0)
         
         return disp
@@ -1277,8 +1288,10 @@ class Ring_Image(Image_Base):
 ##################################################################
 class TensileTest():
     
-    def __init__(self, LF_file=None,software=None,L0=1,A_x=1):
+    def __init__(self, LF_file=None,software=None,L0=1,A_x=1,get_geometry_flag=False):
         self.df = pd.read_csv(LF_file)
+        
+        self.filepath = '/'.join(LF_file.replace('\\','/').split('/')[0:-1])
         
         for i, row in self.df.iterrows():
             if len(row['top_img_file'].split('/')) == 1:
@@ -1288,9 +1301,6 @@ class TensileTest():
                     self.df.loc[i,'side_img_file'] =  self.filepath +'/'+ row['side_img_file']
             except KeyError:#No side view images in LF file
                 pass  
-        
-        self.filepath = '/'.join(LF_file.replace('\\','/').split('/')[0:-1])
-
         # if there is an unlabeled column, delete. This comes from saving a 
         # dataframe to a csv without turning off the index
         try:  
@@ -1314,9 +1324,65 @@ class TensileTest():
         self.df['true_stress'] = self.df['stress (MPa)'] * \
             (1+self.df['eng_strain'])
             
-    def adjust_displacements(self, x1,y1,x2,y2,ext_mode='norm'):
-        self.df['adj_displ'] = [self.digital_extensometer(x1,y1,x2,y2,ext_mode) for n in range(self.num_datapoints)]
-        self.df['adj_eng_strain'] = self.df['adj_displ']/self.gauge_length
+        self.centroid = np.array((0,0))
+        self.scale = 1
+        if get_geometry_flag:
+            self.get_geometry()         
+            
+
+    def get_geometry(self):
+        img = self.open_Image(0)
+        plot_img = mpimg.imread(img.test_img_file)
+
+        f,ax = make_img_figure()
+        f.subplots_adjust(top=0.80,bottom=0.05,left=0.05,right=0.95,hspace=0.2,wspace=0.2)         
+
+        ax.imshow(plot_img, cmap='gray')
+        
+        pts = UI_line(ax,'Left click 2 points to make a scale bar.',color='r')
+        time.sleep(0.25)
+       
+
+        root = tk.Tk()
+        d = simpledialog.askfloat(title='Scale',
+                                  prompt='Please input the length in mm of this line',
+                                  initialvalue = 1)
+        root.destroy()
+        plt.close()
+        disp = np.linalg.norm(np.diff(pts,axis=0))
+        
+        self.scale = disp/d #pixels/mm
+
+        # f,ax = make_img_figure()
+        # f.subplots_adjust(top=0.80,bottom=0.05,left=0.05,right=0.95,hspace=0.2,wspace=0.2)         
+
+        # ax.imshow(plot_img, cmap='gray')
+        
+        # pts = UI_polygon(ax,'Left click 4 points to make a rectangle.\nThe center of the rectangle will be the centroid',facecolor='r')
+        # time.sleep(0.25)        
+        # plt.close() 
+        # self.centroid = np.mean(pts[0:-1,:],axis=0)
+        # print(centroid)
+        self.centroid = np.array((0,0))
+            
+        #maybe rename this digital extensometer???
+    def digital_extensometer(self, x1,y1,x2,y2,ext_mode='norm'):
+        
+        adj_displ = []
+        for n in range(self.num_datapoints):
+            if n %100 == 99:
+                print(str(n+1)+'/'+str(self.num_datapoints+1)+' extensometer points analyzed')
+            elif n==self.num_datapoints:
+                print(str(n+1)+'/'+str(self.num_datapoints+1)+' extensometer points analyzed') 
+            
+            try:
+                # assert False
+                adj_displ.append(self.open_Image(n).digital_extensometer(x1,y1,x2,y2,ext_mode))
+            except:#no data points in the DIC data
+                adj_displ.append(self.df['displacement (mm)'][n])
+        
+        self.df['adj_displ'] = adj_displ
+        self.df['adj_eng_strain'] = (self.df['adj_displ'] - self.df['adj_displ'][0]) / self.gauge_length
         self.df['adj_true_strain'] = np.log(1+self.df['adj_eng_strain'])
 
     def process_stress_strain_curve(self,plot_flag = False):
@@ -1364,10 +1430,10 @@ class TensileTest():
         f,ax= make_figure()
         ax.plot(x,y)
         prompt = 'Left click 2 points to define the elastic region.'
-        pts = UI_line(ax,prompt)
+        pts = UI_line(ax,prompt,color='b')
         pts = [(pts[0,0],pts[0,1]),(pts[1,0],pts[1,1])]
         idx = [find_nearest_idx(x,y,pt[0],pt[1]) for pt in pts]
-        print(idx)
+        idx = np.sort(idx)
         plt.close(f)
         c = np.polynomial.polynomial.polyfit(x[idx[0]:idx[1]], y[idx[0]:idx[1]], 1)
         calc_modulus = c[1]
@@ -1381,8 +1447,9 @@ class TensileTest():
         true_modulus = true_modulus*1000
         
         # correct equivalent strain to fix the curve
-        x = (x + c[0]/c[1] - y*(1/c[1]-1/true_modulus))
-        
+        x = (x - y*(1/c[1]-1/true_modulus) + c[0]/c[1])
+        self.df['mod_adj_eng_strain'] = copy.copy(x)
+
         # moving average of the curves for proper YS location
         N = 25
         x_smooth = np.convolve(x, np.ones(N)/N, mode='valid')
@@ -1412,8 +1479,8 @@ class TensileTest():
             ax.plot(x[UTS_idx],y[UTS_idx],'ob')
             ax.plot(eps_u + np.array([0,UTS])/true_modulus,[0,UTS],'--')
             ax.plot(eps_total + np.array([0,y.dropna().iloc[-1]])/true_modulus,[0,y.dropna().iloc[-1]],'--')
-            ax.set_xlabel('Equivalent Strain [mm/mm]')
-            ax.set_ylabel('Equivalent Stress [MPa]')
+            ax.set_xlabel('Strain [mm/mm]')
+            ax.set_ylabel('Stress [MPa]')
        
         return true_modulus, YS, UTS, eps_u, eps_nu, eps_total, toughness
 
@@ -1440,7 +1507,7 @@ class TensileTest():
         
         # open Image
         img = Image_Base(test_img = img_file, init_img = self.df['top_img_file'][0], 
-                        software = self.software)
+                        software = self.software,centroid = self.centroid,scale=self.scale)
         return img
 
     def save_data(self):
@@ -1518,18 +1585,23 @@ class TensileTest():
         plot_kwargs = { **default_kwargs, **plot_kwargs }
         f,ax = make_figure(ax)
 
+        
+        x = self.df[x_axis]
+        y = self.df[y_axis]
+
         # shifts the data by as many frames as you want.
         # Or can shift so it is lined up with UTS
         if type(shift) == int or type(shift) == float:
             shift = int(shift)
-        elif shift == True:
+            x = x-x[shift]
+        elif shift:
             shift = self.df['stress (MPa)'].argmax()
+            x = x-x[shift]
         else:
             shift = 0
-        x = self.df[x_axis]
-        y = self.df[y_axis]
+
          
-        x = x-x[shift]
+        
 
         ax.plot(x, y, **plot_kwargs)
         if n:
@@ -1600,16 +1672,12 @@ class RingPull(TensileTest):
         # calculate cross sectional area
         A_x = ((OD-ID)*W)
         
-        super().__init__(LF_file,software,gauge_length,A_x)
+        super().__init__(LF_file,software,gauge_length,A_x,get_geometry_flag)
         # self.Image_class = Ring_Image  
-            
-        self.OD_path = None
-        self.ID_path = None
-
-        self.centroid = None
-        self.scale = None
-        if get_geometry_flag:
-            self.get_geometry()  
+        
+        if not hasattr(self,'OD_path'):
+            self.OD_path = None
+            self.ID_path = None
 
     def get_a(self, r):
         return self.open_Image(0).get_a(r)        
@@ -1709,7 +1777,6 @@ class RingPull(TensileTest):
         f,ax = make_img_figure()
         f.subplots_adjust(top=0.80,bottom=0.05,left=0.05,right=0.95,hspace=0.2,wspace=0.2)        
         
-       # plot the DIC data on the image
         ax.imshow(plot_img, cmap='gray')
         
         pts = UI_circle(ax,'Left click 3 points to make the outer circle.',facecolor='r')
