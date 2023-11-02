@@ -1292,10 +1292,14 @@ class TensileTest():
         self.df = pd.read_csv(LF_file)
         
         self.filepath = '/'.join(LF_file.replace('\\','/').split('/')[0:-1])
+        self.LF_file =  LF_file.replace('\\','/').split('/')[-1]
         
         for i, row in self.df.iterrows():
-            if len(row['top_img_file'].split('/')) == 1:
-                self.df.loc[i,'top_img_file'] =  self.filepath +'/'+ row['top_img_file']
+            try:
+                if len(row['top_img_file'].split('/')) == 1:
+                    self.df.loc[i,'top_img_file'] =  self.filepath +'/'+ row['top_img_file']
+            except KeyError: #No images associated with test
+                pass
             try:
                 if len(row['side_img_file'].split('/')) == 1:
                     self.df.loc[i,'side_img_file'] =  self.filepath +'/'+ row['side_img_file']
@@ -1463,9 +1467,9 @@ class TensileTest():
         # find UTS
         UTS_idx = np.nanargmax(y)
         UTS = np.nanmax(y)
-        eps_u = x[UTS_idx]-UTS/true_modulus
+        eps_u = x[UTS_idx]
         # find elongation at fracture
-        eps_total = x.dropna().iloc[-1]-y.dropna().iloc[-1]/true_modulus
+        eps_total = x.dropna().iloc[-1]
         eps_nu = eps_total-eps_u
 
         # Find Area under curve (toughness)
@@ -1473,12 +1477,17 @@ class TensileTest():
         
         if plot_flag:
             f,ax = make_figure()
-            ax.plot(x,y)
-            ax.plot(np.array([0,UTS])/true_modulus,[0,UTS],'--')
-            ax.plot(x_smooth[YS_idx],y_smooth[YS_idx],'or')
-            ax.plot(x[UTS_idx],y[UTS_idx],'ob')
-            ax.plot(eps_u + np.array([0,UTS])/true_modulus,[0,UTS],'--')
-            ax.plot(eps_total + np.array([0,y.dropna().iloc[-1]])/true_modulus,[0,y.dropna().iloc[-1]],'--')
+            
+            ax.plot(x,y,color='k')
+            ax.plot(0.002+np.array([0,UTS])/true_modulus,[0,UTS],'--',color='C0')
+            ax.plot(eps_u*np.ones(2,),[0,UTS],'--',color='C2')
+            ax.plot(eps_total*np.ones(2,),[0,y.dropna().iloc[-1]],'--',color='C3')
+            
+            ax.plot(x_smooth[YS_idx],y_smooth[YS_idx],'^',color='C0',label='0.2% offset')
+            ax.plot(x[UTS_idx],y[UTS_idx],'dr',color='C1',label='ultimate tensile')
+            ax.plot(eps_u,0,'o',color='C2',label='uniform elongation')
+            ax.plot(eps_total,0,'s',color='C3',label='total elongation')
+
             ax.set_xlabel('Strain [mm/mm]')
             ax.set_ylabel('Stress [MPa]')
        
@@ -1531,7 +1540,7 @@ class TensileTest():
                                      filetypes=[('CSV file','.csv')],
                                      defaultextension='.csv',
                                      initialdir=self.filepath,
-                                     initialfile='output.csv')
+                                     initialfile=self.LF_file)
         root.destroy()
         
         if f is None: # asksaveasfile return `None` if dialog closed with "cancel".

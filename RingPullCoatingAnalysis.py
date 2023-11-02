@@ -363,7 +363,7 @@ class RingPullCoatingAnalysis2():
 
     def _side_image_angle_UI(self,n,side_img_zoom=[(None,None),(None,None)]):
         #if get_geometry has not been run yet
-        if self.test.scale is None:
+        if self.test.scale == 1:
             self.test.get_geometry()
 
 
@@ -382,12 +382,12 @@ class RingPullCoatingAnalysis2():
             pts = UI_get_pts(prompt=prompt)
             #close side image plot   
             plt.close(f)
-
             pts = np.array(pts)
             y_loc_side=pts[:,1]
 
-            side_view_distance =  (y_loc_side - self.side_view_centroid[1]) / self.side_view_scale[1] 
-            y_loc_top = -side_view_distance * self.test.scale+self.test.centroid[0] # mm * pixels/mm = pixel   
+            side_view_distance =  (self.side_view_centroid[1] - y_loc_side) / self.side_view_scale[1] 
+            y_loc_top = -side_view_distance * self.test.scale + self.test.centroid[1] # mm * pixels/mm = pixel 
+
             y_loc_array_side.append(y_loc_side)
             y_loc_array_top.append(y_loc_top)
 
@@ -415,14 +415,14 @@ class RingPullCoatingAnalysis2():
         f,ax = self.test.plot_side_img(0,side_img_zoom=side_img_zoom,side_view_col= self.side_view_col)
         #get scale from the side image
         #don't do if scale is already set
-        if not hasattr(self,'side_view_scale'):
+        if (not hasattr(self,'side_view_scale')):
             prompt = 'Left click at least 5 points on the outer diameter of \nthe ring to define an ellipse.'
             pts = UI_ellipse(ax,prompt)
-            
             #assumes the ellipse major and minor axis are aligned with the x and y axis
             self.side_view_centroid = np.mean(pts,axis=0)
             self.side_view_radii = np.max(pts-self.side_view_centroid,axis=0)
-            self.side_view_scale = self.side_view_radii /self.test.OD #pix/mm 
+            self.side_view_scale = self.side_view_radii * 2 / self.test.OD  #pix/mm 
+            
 
         plt.close(f)
 
