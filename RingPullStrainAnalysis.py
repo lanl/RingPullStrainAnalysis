@@ -8,13 +8,13 @@ output 2-dimensional mesh of strain data specific to a gaugeless Ring Pull test
 and analyzing it for parameters of interest. RPSA also allows input load frame 
 data that is synchronized with the DIC images.
 
-v1.4
+v1.5
 
 Created by:
     Peter Beck
     pmbeck@lanl.gov
 Updated:
-    20-Oct-2023
+    22-Nov-2023
 
 
 General notes on naming conventions and coding practices:
@@ -90,9 +90,6 @@ from matplotlib.gridspec import GridSpec
 
 
 
-
-
-
 def make_figure(ax=None):
     '''
     Description
@@ -153,12 +150,14 @@ def make_img_figure(ax=None):
         f = plt.figure()
         ax = plt.axes()
         f.set_size_inches(6.5,4)
+        f.subplots_adjust(top=0.875,bottom=0.085,left=0.05,right=0.95,hspace=0.2,wspace=0.2)
     else:
         f = ax.get_figure()
 
+    ax.axis('equal')
     ax.axes.xaxis.set_visible(False)
     ax.axes.yaxis.set_visible(False)
-    f.subplots_adjust(top=0.875,bottom=0.085,left=0.05,right=0.95,hspace=0.2,wspace=0.2)
+    
     return f,ax
 
 def make_3D_figure(ax = None):
@@ -260,11 +259,13 @@ def make_GIF(images_list, output_filename, end_pause=True,**writer_kwargs):
             images_list.append(images_list[-1])
     with imageio.get_writer(output_filename, mode='I',**writer_kwargs) as writer:
         for f in images_list:
-            image = imageio.imread(f,pilmode='RGB')
+            # image = imageio.imread(f,pilmode='RGB')
+            image = imageio.imread(f)
             writer.append_data(image)
     print('GIF has been created at the following location:')
     print(output_filename)
     return output_filename
+
        
 def define_circle(p1, p2, p3):
     '''
@@ -306,7 +307,7 @@ def define_circle(p1, p2, p3):
 
 
 
-def UI_get_pts(prompt,n=None):
+def UI_get_pts(prompt,n=None,f = None,ax = None):
     '''
     Description
     -----------
@@ -331,9 +332,14 @@ def UI_get_pts(prompt,n=None):
         List of (x,y) points that the user selected
     '''
     
-    plt.gcf().subplots_adjust(top=0.80,bottom=0.08,left=0.17,right=0.95,hspace=0.2,wspace=0.2)
+    if not f:
+        f = plt.gcf()
+    if not ax:
+        ax = plt.gca()
+    
+    f.subplots_adjust(top=0.80,bottom=0.08,left=0.17,right=0.95,hspace=0.2,wspace=0.2)
     prompt += '\nRight click to finish.\nMiddle mouse to remove points'
-    plt.title(prompt)
+    ax.set_title(prompt)
     plt.draw() 
     while True:
         pts = plt.ginput(1000, timeout=-1,mouse_pop=MouseButton.MIDDLE,mouse_stop=MouseButton.RIGHT)
@@ -411,7 +417,6 @@ def define_ellipse(pts):
 
     ans = np.linalg.lstsq(A, b,rcond=None)[0].squeeze()
     ans = np.append(ans,-1)
-    print(ans)
 
     return ans
 
@@ -455,7 +460,7 @@ def UI_ellipse(ax,prompt):
         X,Y = np.meshgrid(X,Y)
         
         Z = ans[0]*X**2 + ans[1] *X*Y + ans[2]*Y**2 + ans[3]*X + ans[4]*Y + ans[5]
-        cs = ax.contour(X,Y,Z,levels=[0],colors='b',linewidths=2)
+        cs = ax.contour(X,Y,Z,levels=[0],colors='b',linewidths=1)
         
         ellipse_path = cs.collections[0].get_paths()[0]
         ellipse_pts = ellipse_path.vertices
@@ -584,7 +589,7 @@ def find_nearest_idx(x_array,y_array,x_q,y_q):
     idx :  int
         index in x_array and y_array that is closest to the test point
     '''
-    return np.nanargmin(((x_array-x_q)**2)/abs(x_q) + ((y_array-y_q)**2)//abs(y_q))
+    return np.nanargmin(abs(x_array-x_q)/abs(x_q) + abs(y_array-y_q)/abs(y_q))
 
 def log_transform(e_row,max_strain,lim=1e2):
     '''
@@ -701,7 +706,6 @@ class Image_Base:
         z = interpolate.griddata((self.df['x'], self.df['y']), self.df[mode].ravel(),
                                  (x, y), method='cubic')
         
-        
         if extrap and np.isnan(z).any():
             assert False, 'Sorry, extrapolation is not available at this time'
             _get_extrap_values = np.vectorize(self._get_extrap_value)
@@ -736,7 +740,7 @@ class Image_Base:
         z = interpolate.griddata((self.df['x_def'], self.df['y_def']), self.df[mode].ravel(),
                                  (x_def, y_def), method='cubic')
         if extrap:
-            assert False
+            assert False, 'Sorry, extrapolation is not available at this time'
         return z
 
     def digital_extensometer(self, x1,y1,x2,y2,ext_mode='norm'):
@@ -851,10 +855,6 @@ class Image_Base:
             pass
 
         cmapable = ax.scatter(x,y,c=z,vmin=-max_strain,vmax=max_strain,**plot_kwargs)
-
-        ax.axis('equal')
-        ax.axes.xaxis.set_visible(False)
-        ax.axes.yaxis.set_visible(False)
 
         #plot cmap unless there is no color (alpha = 0)
         if plot_kwargs['alpha']==0:
@@ -981,58 +981,64 @@ class Ring_Image(Image_Base):
         disp = float(z[0]-z[1])    
         return disp  
 
-    def _get_extrap_value(self,a,theta,mode='e_vm'):
-        '''
-        Description
-        -----------
-        This function is intended to extrapolate strain values at the edge of 
-        the ring . Since there is no mathematical basis for 2D extrapolation, 
-        we look only across the thickness of the ring (theta = constant, 
-        a = from 0 to 1) and create a 1D curve. This function then returns the
-        extrapolated value from the curve.
-        
-        Parameters
-        ----------
-        a : float
-            The value of a to get strain value from.
-        theta : float
-            The value of theta to get strain value from.
-        mode : str, optional
-            The type of strain to return. The default is 'e_vm'.
-
-        Returns
-        -------
-        z : float
-            The extrapolated strain value
-        '''
-        
-        # maybe use this for 2-D extrapolation? https://github.com/pig2015/mathpy/blob/master/polation/globalspline.py
-        # https://stackoverflow.com/questions/34053174/python-scipy-for-2d-extrapolated-spline-function
-        
-        # general info on many python interpolation functions:
-        # https://stackoverflow.com/questions/37872171/how-can-i-perform-two-dimensional-interpolation-using-scipy
-        
-        a_i,z = self.get_strain_distribution(theta,mode,extrap=False,N=50)
-        z = np.reshape(z, a_i.shape)
-        a_i = a_i[np.invert(np.isnan(z))]
-        z=z[np.invert(np.isnan(z))]
-
-        
-        if (np.size(a_i) <= 1):#if the entire array is NaN or if there is not enough values to extrapolate off of
-            z = np.nan
+    def _get_extrap_value(self,a,theta,mode='e_vm',extrap='extrap',smoothing=False):
+        def extrapolation(a,theta,mode,extrap):
+            def lin_regress(a_i,z,a,cutoff=0.5):
+                z = z[a_i > cutoff]
+                a_i = a_i[a_i > cutoff]
+                m,b,_,_,_ = linregress(a_i,z)
+                reg_point = a * m + b
+                return reg_point
+                
+            a_i,z = self.get_strain_distribution(theta,mode,extrap=False,N=50)
+            z = np.reshape(z, a_i.shape)
+            a_i = a_i[np.invert(np.isnan(z))]
+            z=z[np.invert(np.isnan(z))]
+    
+            if (np.size(a_i) <= 1):#if the entire array is NaN or if there is not enough values to extrapolate off of
+                z = np.nan
+            else:
+                if extrap == 'extrap' or extrap==True:
+                    f = interpolate.interp1d(a_i,z,fill_value='extrapolate')
+                    z = f(a)   
+                    
+                elif extrap=='lin_regress':
+                    z = lin_regress(a_i,z,a)
+                    
+                elif extrap == 'nearest':
+                    f = interpolate.interp1d(a_i,z,bounds_error=False,fill_value=z[-1])
+                    z = f(a)
+                    
+            return z
+                    
+        if smoothing:
+            M = 11
+            frac = 1/100
+            theta_array = np.linspace(theta-frac*pi,theta+frac*pi,M)
+            z_array = np.array([extrapolation(a,angle,mode,extrap) for angle in theta_array])
+            
+            def gaussian(x,sigma):
+                return 1/np.sqrt(2*np.pi)/sigma * np.exp(-x**2/(2*sigma**2))
+            weights = gaussian(np.linspace(-5,5,M),1.75)
+            weights = weights / sum(weights)
+            weighted_mean = sum(z_array*weights)
+            
+            z = weighted_mean
+            
         else:
-            f = interpolate.interp1d(a_i,z,fill_value='extrapolate')
-            z = f(a)
+            z = extrapolation(a,theta,mode,extrap)
+                    
+                
         return z
     
-    def get_value(self,a,theta,mode='e_vm',extrap=False):
+    def get_value(self,a,theta,mode='e_vm',extrap=False,smoothing=False):
         '''
         Description
         -----------
         Returns the requested values of strain or displacement at a specific 
         point defined by a and theta. This value will be interpolated between
         the surrounding grid points. Optional extrapolation as described in the 
-        _get_extrap_values function.
+        _get_extrap_value function.
 
         Parameters
         ----------
@@ -1058,6 +1064,9 @@ class Ring_Image(Image_Base):
         if mode not in self.df.columns:#mode is in df
             self.analyze_radial_strains()
         
+        if type(theta) == float or type(theta) == list:
+            np.array(theta)
+        
         if type(a) ==int:
             a = a + np.zeros(theta.shape)
         
@@ -1073,9 +1082,8 @@ class Ring_Image(Image_Base):
                                  (x, y), method='cubic')
 
         if extrap and np.isnan(z).any():
-            _get_extrap_values = np.vectorize(self._get_extrap_value)
-            z[np.isnan(z)] = _get_extrap_values(a[np.isnan(z)],theta[np.isnan(z)],mode)
-        
+            # _get_extrap_values = np.vectorize(self._get_extrap_value)
+            z = self._get_extrap_value(a,theta,mode,extrap,smoothing)
         return z
 
     def analyze_radial_strains(self):
@@ -1114,10 +1122,8 @@ class Ring_Image(Image_Base):
             self.df.loc[i,'ett']=tensor[1, 1]
             
             n+=1
-            if n %1000 ==999:
-                print(str(n+1)+'/'+str(n_max+1)+' radial points analyzed')
-            elif n==n_max:
-                print(str(n+1)+'/'+str(n_max+1)+' radial points analyzed')        
+            if n %1000 ==999 or n==n_max:
+                print(f'{n+1}/{n_max+1} radial points analyzed')
 
     def get_a(self, r):
         '''
@@ -1224,11 +1230,21 @@ class Ring_Image(Image_Base):
         
         # get linspace of values spanning the thickness
         a = np.linspace(0, 1, N)
-
         # get the strain at each of these values
-        z = self.get_value(a,theta,mode,extrap)
-        # reshape this array to be a 1-d vector like a
-        z = z.transpose()
+        
+        z = []
+        for a_i in a:
+            z_i = self.get_value(a_i,theta,mode,extrap)
+            z.append(z_i)
+        z=np.array(z)
+        
+        
+        
+        # z = np.array([self.get_value(a_i,theta,mode,extrap) for a_i in a])
+        
+        
+        
+        
         
         return a, z  
 
@@ -1288,7 +1304,7 @@ class Ring_Image(Image_Base):
 ##################################################################
 class TensileTest():
     
-    def __init__(self, LF_file=None,software=None,L0=1,A_x=1,get_geometry_flag=False):
+    def __init__(self, LF_file=None,software='VIC-2D',L0=1,A_x=1,get_geometry_flag=False):
         self.df = pd.read_csv(LF_file)
         
         self.filepath = '/'.join(LF_file.replace('\\','/').split('/')[0:-1])
@@ -1298,12 +1314,12 @@ class TensileTest():
             try:
                 if len(row['top_img_file'].split('/')) == 1:
                     self.df.loc[i,'top_img_file'] =  self.filepath +'/'+ row['top_img_file']
-            except KeyError: #No images associated with test
+            except: #No images associated with test
                 pass
             try:
                 if len(row['side_img_file'].split('/')) == 1:
                     self.df.loc[i,'side_img_file'] =  self.filepath +'/'+ row['side_img_file']
-            except KeyError:#No side view images in LF file
+            except:#No side view images in LF file
                 pass  
         # if there is an unlabeled column, delete. This comes from saving a 
         # dataframe to a csv without turning off the index
@@ -1356,28 +1372,16 @@ class TensileTest():
         disp = np.linalg.norm(np.diff(pts,axis=0))
         
         self.scale = disp/d #pixels/mm
-
-        # f,ax = make_img_figure()
-        # f.subplots_adjust(top=0.80,bottom=0.05,left=0.05,right=0.95,hspace=0.2,wspace=0.2)         
-
-        # ax.imshow(plot_img, cmap='gray')
-        
-        # pts = UI_polygon(ax,'Left click 4 points to make a rectangle.\nThe center of the rectangle will be the centroid',facecolor='r')
-        # time.sleep(0.25)        
-        # plt.close() 
-        # self.centroid = np.mean(pts[0:-1,:],axis=0)
-        # print(centroid)
         self.centroid = np.array((0,0))
-            
+        
+
         #maybe rename this digital extensometer???
     def digital_extensometer(self, x1,y1,x2,y2,ext_mode='norm'):
         
         adj_displ = []
         for n in range(self.num_datapoints):
-            if n %100 == 99:
-                print(str(n+1)+'/'+str(self.num_datapoints+1)+' extensometer points analyzed')
-            elif n==self.num_datapoints:
-                print(str(n+1)+'/'+str(self.num_datapoints+1)+' extensometer points analyzed') 
+            if n %100 == 99 or n==self.num_datapoints:
+                print(f'{n+1}/{self.num_datapoints+1} extensometer points analyzed')
             
             try:
                 # assert False
@@ -1615,7 +1619,6 @@ class TensileTest():
         ax.plot(x, y, **plot_kwargs)
         if n:
             ax.plot(x[n],y[n],'ok')
-        ax.legend()
         return f, ax
          
     def plot_Image(self,n,**kwargs):
@@ -1745,12 +1748,12 @@ class RingPull(TensileTest):
 
         # open DIC_Image
         img = self.open_Image(n)
-        # plot the strain distribution
-        a, e = img.get_strain_distribution(theta, mode, extrap)
         
         # plot the strain distribution
-        ax.plot(a, e, **plot_kwargs)
+        a, e = img.get_strain_distribution(theta, mode, extrap,50)
 
+        # plot the strain distribution
+        ax.plot(a, e, **plot_kwargs)
         # modify the axis parameters to create pretty plots
         ax.set_xlim(0, 1)
         ax.set_ylabel('strain [mm/mm]')
@@ -1763,57 +1766,44 @@ class RingPull(TensileTest):
         return f, ax
 
     def get_geometry(self):
-        """
-        Description
-        -----------
-        Function that opens the initial image and has the user click points to 
-        make the ring geometry. Uses this to define the scale and centroid of 
-        the ring.
-
-        Parameters
-        ----------
-        None.
-
-        Returns
-        -------
-        None.
-
-        """
-    
         img = self.open_Image(0)
         plot_img = mpimg.imread(img.test_img_file)
 
-        f,ax = make_img_figure()
-        f.subplots_adjust(top=0.80,bottom=0.05,left=0.05,right=0.95,hspace=0.2,wspace=0.2)        
-        
+        f,ax = make_img_figure()   
         ax.imshow(plot_img, cmap='gray')
+        
+        
+        # prompt = 'Left click at least 5 points on the outer diameter of \nthe ring to define an ellipse.'
+        # pts = UI_ellipse(ax,prompt)    
+        
+        # prompt = 'Left click at least 5 points on the inner diameter of \nthe ring to define an ellipse.'
+        # pts2 = UI_ellipse(ax,prompt)    
+        
+        # self.OD_path = mplPath.Path(pts[0:-1,:])
+        # self.ID_path = mplPath.Path(pts2[0:-1,:])        
+        # self.centroid = np.mean(pts,axis=0)
+        # self.scale = np.mean(np.mean(np.amax(pts[0:-1,:],axis=0) - np.amin(pts[0:-1,:],axis=0))/self.OD) #pixels per mm
+        
         
         pts = UI_circle(ax,'Left click 3 points to make the outer circle.',facecolor='r')
         pts2 = UI_circle(ax,'Left click 3 points to make the inner circle.',facecolor='b')
-        time.sleep(0.25)
-        plt.close() 
-        
+
         self.OD_path = mplPath.Path(pts[0:-1,:])
         self.ID_path = mplPath.Path(pts2[0:-1,:])
-        
         self.centroid = np.mean(pts[0:-1,:],axis=0)
         self.scale = np.mean(np.amax(pts[0:-1,:],axis=0) - np.amin(pts[0:-1,:],axis=0))/self.OD #pixels per mm
-
-    def plot_top_img(self,n, ax=None,top_img_zoom = ((None,None),(None,None)),**plot_kwargs):
-        default_kwargs = {'max_strain':0.5}
-        plot_kwargs = { **default_kwargs, **plot_kwargs }
         
-        f,ax = self.open_Image(n).plot_Image(ax=ax,**plot_kwargs)
-        ax.set_xlim(top_img_zoom[0])
-        ax.set_ylim(top_img_zoom[1])        
-        return f,ax
+        plt.close(f)
+        
+        
 
-    def plot_side_img(self,n, ax=None,side_img_zoom = ((None,None),(None,None)),side_view_col='side_img_file'):
+
+    def plot_side_img(self,n, ax=None,side_view_col='side_img_file',side_img_zoom = ((None,None),(None,None))):
         f,ax = make_img_figure(ax) # if no axes provided, create one
         plot_img = mpimg.imread(self.df['side_img_file'][n]) 
         ax.imshow(plot_img, cmap='gray')
         ax.set_xlim(side_img_zoom[0])
-        ax.set_ylim(side_img_zoom[1])
+        ax.set_ylim(side_img_zoom[1])  
         return f,ax
     
     def plot_top_side_img(self,n,top_img_zoom = ((None,None),(None,None)),side_img_zoom = ((None,None),(None,None)),side_view_col='side_img_file'):
@@ -1822,8 +1812,16 @@ class RingPull(TensileTest):
         gs = GridSpec(8,5,wspace=0.0010,hspace=0.100)
         ax1 = f.add_subplot(gs[0:6,0:5])
         ax2 = f.add_subplot(gs[6:8,0:5])
-        self.plot_top_img(n,ax1,top_img_zoom)
-        self.plot_side_img(n,ax2,side_img_zoom,side_view_col)
+        
+        f,ax = self.open_Image(n).plot_Image(ax=ax1,max_strain = 0.5)
+        ax1.set_xlim(top_img_zoom[0])
+        ax1.set_ylim(top_img_zoom[1])         
+        
+        self.plot_side_img(n,ax2,side_view_col)
+        ax2.set_xlim(side_img_zoom[0])
+        ax2.set_ylim(side_img_zoom[1])        
+        
+        
         return f, [ax1,ax2]
 
 ##################################################################
@@ -1831,10 +1829,6 @@ class RingPull(TensileTest):
 if __name__ == '__main__':  # only runs if this script is the main script
     print('Please go to example script, RPSA_example.py')
 
-# import contextlib
-# with open('E:\\Projects\\RingPull\\RPSA\\RPSA_example\\docs.md', 'w') as f:
-#     with contextlib.redirect_stdout(f):
-#         help(RingPullStrainAnalysis)
 
 
 
