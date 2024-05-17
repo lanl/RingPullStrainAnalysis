@@ -43,7 +43,7 @@ class RingPullCoatingAnalysis():
             assert False, "The mode needs to be either 'tension' or 'compression'"
         self.mode = mode
 
-    def get_side_image_strain(self,n,N=50,M=10, side_img_zoom=[(None,None),(None,None)],debug=False):
+    def get_side_image_strain(self,n, side_img_zoom=[(None,None),(None,None)],debug=False):
         # if n is not a list or array,make it so
         if type(n) != list and type(n) != type(np.array([])):
             n = [n]
@@ -54,6 +54,9 @@ class RingPullCoatingAnalysis():
         angles_array = self._side_image_angle_analysis(n,pts_array)
         self.angles_array = angles_array
         print('starting strain analysis')
+        N=50
+        M=10
+        
         extrap_points_array, reg_points_array, nearest_values_array = self._side_image_strain_analysis(n,angles_array,N,M)
         
         if debug:
@@ -83,6 +86,7 @@ class RingPullCoatingAnalysis():
             # plot the side view image
             if i>0:
                 if i ==1:
+                    plt.close(f)
                     if self.mode == 'tension':
                         f = plt.figure(figsize=(6.5,4))
                         gs = GridSpec(1,2,wspace=.01,hspace=.01)
@@ -109,8 +113,7 @@ class RingPullCoatingAnalysis():
 
             #get point where you are trying to locate the theta
             pts = UI_get_pts(prompt=prompt)
-            #close side image plot   
-            # plt.close(f)
+
             pts = np.array(pts)
             
             if self.mode =='tension':
@@ -124,7 +127,9 @@ class RingPullCoatingAnalysis():
 
             loc_array_side.append(loc_side)
             loc_array_top.append(loc_top)
-            
+        plt.close(f)
+        
+        
         img_array = []
         pts_array = []
         for i,n_i in enumerate(n):
@@ -149,6 +154,7 @@ class RingPullCoatingAnalysis():
             
             img_array.append(img)
             pts_array.append(pts)
+        plt.close(f)
 
         return pts_array, loc_array_top, loc_array_side
 
@@ -202,10 +208,16 @@ class RingPullCoatingAnalysis():
                 angle = pi#guess
                 for frac in [1,1/4,1/19,1/94,1/469]:
                     theta = np.linspace(angle-frac*pi, angle+frac*pi,10)
-                    x = img.get_value(a,theta,mode='x_def',extrap=True)
-                    y = img.get_value(a,theta,mode='y_def',extrap=True)
+                    
+                    # x = img.get_value(a,theta,mode='x_def',extrap=True)
+                    # y = img.get_value(a,theta,mode='y_def',extrap=True)
+                    
+                    x = np.array([img.get_value(a,theta_i,mode='x_def',extrap=True) for theta_i in theta])
+                    y = np.array([img.get_value(a,theta_i,mode='y_def',extrap=True) for theta_i in theta])
+
                     x_pixel = x*self.test.scale
-                    y_pixel = y*self.test.scale   
+                    y_pixel = y*self.test.scale  
+                    
                     idx = find_nearest_idx(x_pixel-self.test.centroid[0],
                                            y_pixel-self.test.centroid[1],
                                            pt[0]-self.test.centroid[0],
@@ -218,7 +230,7 @@ class RingPullCoatingAnalysis():
         return angles_array
     
     def _side_image_strain_analysis(self,n,angles_array,N=50,M=10):
-        if type(n) != list and type(n) != type(np.array([])):
+        if type(n) != list and type(n) != type(np.array([])) and type(n) != tuple:
             n = [n]
         extrap_points_array = []
         reg_points_array   = []

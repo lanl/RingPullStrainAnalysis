@@ -8,7 +8,7 @@ output 2-dimensional mesh of strain data specific to a gaugeless Ring Pull test
 and analyzing it for parameters of interest. RPSA also allows input load frame 
 data that is synchronized with the DIC images.
 
-v1.5
+v1.1
 
 Created by:
     Peter Beck
@@ -113,7 +113,7 @@ def make_figure(ax=None):
         f = plt.figure()
         ax = plt.gca()
         # f.set_size_inches(1920/f.dpi,1200/f.dpi)
-        f.set_size_inches([3.5,2.9])
+        f.set_size_inches([3.25,2.9])
         f.subplots_adjust(top=0.92,bottom=0.12,left=0.17,right=0.96,hspace=0.2,wspace=0.2)        
     else:
         f = ax.get_figure()
@@ -265,8 +265,7 @@ def make_GIF(images_list, output_filename, end_pause=True,**writer_kwargs):
     print('GIF has been created at the following location:')
     print(output_filename)
     return output_filename
-
-       
+    
 def define_circle(p1, p2, p3):
     '''
     Description
@@ -304,8 +303,6 @@ def define_circle(p1, p2, p3):
 
     radius = np.sqrt((cx - p1[0])**2 + (cy - p1[1])**2)
     return ((cx, cy), radius)
-
-
 
 def UI_get_pts(prompt,n=None,f = None,ax = None):
     '''
@@ -420,7 +417,6 @@ def define_ellipse(pts):
 
     return ans
 
-
 def UI_ellipse(ax,prompt):
     '''
     Description
@@ -475,8 +471,6 @@ def UI_ellipse(ax,prompt):
             plt.draw()
             #ask for new circle
     return ellipse_pts 
-
-
 
 def UI_polygon(ax,prompt,facecolor):
     '''
@@ -707,13 +701,11 @@ class Image_Base:
                                  (x, y), method='cubic')
         
         if extrap and np.isnan(z).any():
-            assert False, 'Sorry, extrapolation is not available at this time'
-            _get_extrap_values = np.vectorize(self._get_extrap_value)
-            z[np.isnan(z)] = _get_extrap_values(x,y,mode)        
-        
+            assert False, 'Sorry, extrapolation is not available at this time'   
         return z
 
     def _get_extrap_value(self,a,theta,mode='e_vm'):
+        '''defnuct function right now'''
         # maybe use this for 2-D extrapolation? https://github.com/pig2015/mathpy/blob/master/polation/globalspline.py
         # https://stackoverflow.com/questions/34053174/python-scipy-for-2d-extrapolated-spline-function
         
@@ -744,10 +736,10 @@ class Image_Base:
         return z
 
     def digital_extensometer(self, x1,y1,x2,y2,ext_mode='norm'):
-        x_def1 = self.get_value(x1/self.scale ,y1/self.scale, mode='x_def')
-        y_def1 = self.get_value(x1/self.scale, y1/self.scale, mode='y_def')
-        x_def2 = self.get_value(x2/self.scale, y2/self.scale, mode='x_def')
-        y_def2 = self.get_value(x2/self.scale, y2/self.scale, mode='y_def')
+        x_def1 = self.get_value(x1 ,y1, mode='x_def')
+        y_def1 = self.get_value(x1, y1, mode='y_def')
+        x_def2 = self.get_value(x2, y2, mode='x_def')
+        y_def2 = self.get_value(x2, y2, mode='y_def')
         
         if ext_mode =='norm':
             pass
@@ -877,7 +869,6 @@ class Image_Base:
                 label.set_verticalalignment('baseline')
         return f,ax  
 
-
 class Ring_Image(Image_Base):
     '''
     Description
@@ -982,53 +973,58 @@ class Ring_Image(Image_Base):
         return disp  
 
     def _get_extrap_value(self,a,theta,mode='e_vm',extrap='extrap',smoothing=False):
-        def extrapolation(a,theta,mode,extrap):
+        def extrapolation(a_i,theta_i,mode,extrap):
             def lin_regress(a_i,z,a,cutoff=0.5):
                 z = z[a_i > cutoff]
                 a_i = a_i[a_i > cutoff]
                 m,b,_,_,_ = linregress(a_i,z)
                 reg_point = a * m + b
-                return reg_point
-                
-            a_i,z = self.get_strain_distribution(theta,mode,extrap=False,N=50)
-            z = np.reshape(z, a_i.shape)
-            a_i = a_i[np.invert(np.isnan(z))]
+                return reg_point       
+            
+            
+            N = 5
+            a = np.linspace(0, 1, N)
+            
+            # print(a)
+            # print(theta)
+            
+            z = self.get_value(a,theta_i,mode,extrap=False)
+        
+            a = a[np.invert(np.isnan(z))]
             z=z[np.invert(np.isnan(z))]
-    
-            if (np.size(a_i) <= 1):#if the entire array is NaN or if there is not enough values to extrapolate off of
+            # assert False
+            if (np.size(a) <= 1):#if the entire array is NaN or if there is not enough values to extrapolate off of
                 z = np.nan
             else:
                 if extrap == 'extrap' or extrap==True:
-                    f = interpolate.interp1d(a_i,z,fill_value='extrapolate')
-                    z = f(a)   
-                    
+                    f = interpolate.interp1d(a,z,fill_value='extrapolate')
+                    z = f(a_i)   
                 elif extrap=='lin_regress':
-                    z = lin_regress(a_i,z,a)
-                    
+                    z = lin_regress(a,z,a_i)
                 elif extrap == 'nearest':
-                    f = interpolate.interp1d(a_i,z,bounds_error=False,fill_value=z[-1])
-                    z = f(a)
-                    
+                    f = interpolate.interp1d(a,z,bounds_error=False,fill_value=z[-1])
+                    z = f(a_i)
             return z
-                    
-        if smoothing:
-            M = 11
-            frac = 1/100
-            theta_array = np.linspace(theta-frac*pi,theta+frac*pi,M)
-            z_array = np.array([extrapolation(a,angle,mode,extrap) for angle in theta_array])
-            
-            def gaussian(x,sigma):
-                return 1/np.sqrt(2*np.pi)/sigma * np.exp(-x**2/(2*sigma**2))
-            weights = gaussian(np.linspace(-5,5,M),1.75)
-            weights = weights / sum(weights)
-            weighted_mean = sum(z_array*weights)
-            
-            z = weighted_mean
-            
-        else:
-            z = extrapolation(a,theta,mode,extrap)
-                    
+        
+        z = np.zeros(a.shape)
+        for i in range(len(a)):
+            a_i = a[i]
+            theta_i = theta[i]
+            if smoothing:
+                M = 11
+                frac = 1/100
+                theta_array = np.linspace(theta_i-frac*pi,theta_i+frac*pi,M)
+                z_array = np.array([extrapolation(a_i,angle,mode,extrap) for angle in theta_array])
                 
+                def gaussian(x,sigma):
+                    return np.exp(-x**2/(2*sigma**2))
+                weights = gaussian(np.linspace(-5,5,M),1.75)
+                weights = weights / sum(weights)
+                weighted_mean = sum(z_array*weights)
+                z[i] = (weighted_mean)
+            else:
+                z[i] = extrapolation(a_i,theta_i,mode,extrap)
+
         return z
     
     def get_value(self,a,theta,mode='e_vm',extrap=False,smoothing=False):
@@ -1081,12 +1077,28 @@ class Ring_Image(Image_Base):
         z = interpolate.griddata((self.df['x'], self.df['y']), z.ravel(),
                                  (x, y), method='cubic')
 
+
         if extrap and np.isnan(z).any():
-            # _get_extrap_values = np.vectorize(self._get_extrap_value)
-            z = self._get_extrap_value(a,theta,mode,extrap,smoothing)
+            idx = np.isnan(z)
+            z[idx] = self._get_extrap_value(a[idx],theta[idx],mode,extrap,smoothing)
+            
+            
         return z
 
-    def analyze_radial_strains(self):
+
+
+    def polar_conversion(self,x,y):
+        # make x-y coords start at the centroid of the figure
+        x = x - self.centroid[0]
+        y = y - self.centroid[1] 
+        
+        r = np.sqrt(x**2+y**2)
+        theta = np.arctan2(y, x)
+        
+        return r,theta
+
+
+    def analyze_radial_strains(self,save= False):
         '''
         Description
         -----------
@@ -1099,12 +1111,15 @@ class Ring_Image(Image_Base):
 
         '''
 
-        # make x-y coords start at the centroid of the figure
-        x = self.df['x'] - self.centroid[0]
-        y = self.df['y'] - self.centroid[1]
-        # convert x-y to r-theta coords
-        theta = np.arctan2(y, x)
-        r = np.sqrt(x**2+y**2)
+        # # make x-y coords start at the centroid of the figure
+        # x = self.df['x'] - self.centroid[0]
+        # y = self.df['y'] - self.centroid[1]
+        # # convert x-y to r-theta coords
+        # theta = np.arctan2(y, x)
+        # r = np.sqrt(x**2+y**2)
+        
+        r,theta = self.polar_conversion(self.df['x'],self.df['y'])
+        
 
         #add r and theta to the DataFrame
         self.df['r'] = r
@@ -1124,7 +1139,10 @@ class Ring_Image(Image_Base):
             n+=1
             if n %1000 ==999 or n==n_max:
                 print(f'{n+1}/{n_max+1} radial points analyzed')
-
+                
+        if save:
+            print('saving still a work in progress')
+            
     def get_a(self, r):
         '''
         Description
@@ -1201,95 +1219,31 @@ class Ring_Image(Image_Base):
         y = -r*np.sin(theta)+self.centroid[1]
         return x,y
 
-    def get_strain_distribution(self, theta=pi/2, mode='ett', extrap = False,N=200):
-        '''
-        Description
-        -----------
-        Returns the distribution of strain across the thickness of the ring.
+    def digital_extensometer(self, x1,y1,x2,y2,ext_mode='norm'):
+        r1,theta1 = self.polar_conversion(x1,y1)
+        r2,theta2 = self.polar_conversion(x2,y2)
+        a1 = self.get_a(r1)
+        a2 = self.get_a(r2)
         
-
-        Parameters
-        ----------
-        theta : float, np.array, optional
-            The value of theta to get strain value from. The default is pi/2.
-        mode : str, optional
-            The type of strain to return. The default is 'ett'.
-        extrap : TYPE, optional
-            Whether or not to use extrapolation to get values. If False, the 
-            function returns NaN values where it is not defined. The default 
-            is False.
-
-        Returns
-        -------
-        a : np.array
-            Array of a values from 0 to 1.
-        e : np.array
-            Matrix of strain values that correspond with the array of a values
-            and the input theta.
-        '''
+       
+        x_def1 = self.get_value(a1 ,theta1, mode='x_def')
+        y_def1 = self.get_value(a1 ,theta1, mode='y_def')
+        x_def2 = self.get_value(a2 ,theta2, mode='x_def')
+        y_def2 = self.get_value(a2 ,theta2, mode='y_def')
         
-        # get linspace of values spanning the thickness
-        a = np.linspace(0, 1, N)
-        # get the strain at each of these values
-        
-        z = []
-        for a_i in a:
-            z_i = self.get_value(a_i,theta,mode,extrap)
-            z.append(z_i)
-        z=np.array(z)
-        
-        
-        
-        # z = np.array([self.get_value(a_i,theta,mode,extrap) for a_i in a])
-        
-        
-        
-        
-        
-        return a, z  
-
-    def digital_extensometer(self, ext_theta,a = 0.5,ext_mode='norm'):
-        '''
-        Description
-        -----------
-        Tracks two points during the test and measures their relative movement
-        to each other. This is essentially a virtual extensometer that can be
-        placed anywhere. Can track either horizontal (x) displacement, 
-        vertical (y), or total displacement (norm).
-
-        Parameters
-        ----------
-        ext_theta : list,np.array
-            A length 2 list of the 2 angles to track. If None or False is
-            passed, will use the pin angle as theta values.
-        a : float, optional
-            The parameter a at which to evaluate the points. The default is 0.5.
-        ext_mode : str, optional
-            Options: 'x', 'y', 'norm'. The default is 'norm'.
-
-        Returns
-        -------
-        disp : float
-            The displacement value from the start of the test.
-
-        '''
-        if not ext_theta:
-            ext_theta=(self.pin_angle-pi/2,self.pin_angle)
-        
-        theta_min = ext_theta[0]
-        theta_max = ext_theta[1]
-        theta = np.linspace(theta_min,theta_max)
-        fun = lambda mode:np.array(self.get_value(a,theta,mode))
         if ext_mode =='norm':
-            position = np.array([fun('x')+fun('u'),fun('y')+fun('v')]).reshape((2,len(theta)))
+            pass
         elif ext_mode=='x':
-            position = np.array([fun('x')+fun('u'),0*fun('y')]).reshape((2,len(theta)))
+            y_def1 = 0
+            y_def2 = 0
         elif ext_mode=='y':
-            position = np.array([0*fun('x'),fun('y')+fun('v')]).reshape((2,len(theta)))
-        vect=np.diff(position)
-        disp = sum(np.linalg.norm(vect,axis=0))
+            x_def1 = 0
+            x_def2 = 0
         
-        return disp
+        vect=np.array((x_def1-x_def2,y_def1-y_def2))
+        disp = np.linalg.norm(vect,axis=0)
+        
+        return disp        
 
     def plot_Image(self, state='deformed', mode='e_vm', log_transform_flag=1e2,
                    max_strain=None, ax=None, **plot_kwargs):
@@ -1375,25 +1329,44 @@ class TensileTest():
         self.centroid = np.array((0,0))
         
 
-        #maybe rename this digital extensometer???
-    def digital_extensometer(self, x1,y1,x2,y2,ext_mode='norm'):
+    def digital_extensometer(self, ext_mode='norm', pts = None):
+        if pts == None:
+            img = self.open_Image(0)
+            f,ax = img.plot_Image()
+            prompt= 'Choose 2 points to create a digital extensometer on the sample'
+            pts = UI_line(ax,prompt)
+            plt.close(f)
+        pts = pts/self.scale
+        x1= pts[0][0]
+        y1= pts[0][1]
+        x2= pts[1][0]
+        y2= pts[1][1]
         
+
+        img = self.open_Image(0)
+        x = np.array(img.df['x'])
+        y = np.array(img.df['y'])
+        idx1 = find_nearest_idx(x,y,x1,y1)
+        idx2 = find_nearest_idx(x,y,x2,y2)
+        x1 = x[idx1]
+        y1 = y[idx1]
+        x2 = x[idx2]
+        y2 = y[idx2]
+            
         adj_displ = []
         for n in range(self.num_datapoints):
-            if n %100 == 99 or n==self.num_datapoints:
-                print(f'{n+1}/{self.num_datapoints+1} extensometer points analyzed')
+        # for n in [0,1,2,3]:
+            if n %50 == 49 or n==self.num_datapoints-1:
+                print(f'{n+1}/{self.num_datapoints} extensometer points analyzed')
             
-            try:
-                # assert False
-                adj_displ.append(self.open_Image(n).digital_extensometer(x1,y1,x2,y2,ext_mode))
-            except:#no data points in the DIC data
-                adj_displ.append(self.df['displacement (mm)'][n])
+            adj_displ.append(self.open_Image(n).digital_extensometer(x1,y1,x2,y2,ext_mode))
+        adj_displ = np.array(adj_displ)
         
-        self.df['adj_displ'] = adj_displ
-        self.df['adj_eng_strain'] = (self.df['adj_displ'] - self.df['adj_displ'][0]) / self.gauge_length
+        self.df['adj_displ'] = adj_displ - adj_displ[0]
+        self.df['adj_eng_strain'] = self.df['adj_displ'] / self.gauge_length
         self.df['adj_true_strain'] = np.log(1+self.df['adj_eng_strain'])
 
-    def process_stress_strain_curve(self,plot_flag = False):
+    def process_stress_strain_curve(self,x_axis= 'adj_eng_strian',y_axis='stress (MPa)',plot_flag = False):
         """
         Description
         -----------
@@ -1429,14 +1402,21 @@ class TensileTest():
         """
         
 
-        y = self.df['stress (MPa)']
+
+        y = self.df[y_axis]
+        
         try:  # try to use DIC adjusted strain. if not, use regular strain
-            x = self.df['adj_eng_strain']
+            x = self.df[x_axis]
         except:
             x = self.df['eng_strain']
+            
+        idx = np.invert(np.isnan(x))
+        x = np.array(x[idx])
+        y = np.array(y[idx]) 
+            
         
         f,ax= make_figure()
-        ax.plot(x,y)
+        ax.plot(x,y,color='C1')
         prompt = 'Left click 2 points to define the elastic region.'
         pts = UI_line(ax,prompt,color='b')
         pts = [(pts[0,0],pts[0,1]),(pts[1,0],pts[1,1])]
@@ -1456,44 +1436,62 @@ class TensileTest():
         
         # correct equivalent strain to fix the curve
         x = (x - y*(1/c[1]-1/true_modulus) + c[0]/c[1])
-        self.df['mod_adj_eng_strain'] = copy.copy(x)
-
-        # moving average of the curves for proper YS location
-        N = 25
-        x_smooth = np.convolve(x, np.ones(N)/N, mode='valid')
-        y_smooth = np.convolve(y, np.ones(N)/N, mode='valid')
+        # self.df['mod_adj_eng_strain'] = copy.copy(x)
         
+       
 
-        # find YS from 0.2% offset
-        YS_idx = np.nanargmin(np.absolute(y_smooth-true_modulus*(x_smooth-0.002)))
-        YS = y_smooth[YS_idx]
-        
+
         # find UTS
         UTS_idx = np.nanargmax(y)
         UTS = np.nanmax(y)
         eps_u = x[UTS_idx]
+
+
+        #plot curve
+        f,ax = make_figure()
+        ax.plot(x,y,color='k')
+        ax.plot(0.002+np.array([0,UTS])/true_modulus,[0,UTS],'--',color='C0',lw= 0.5)
+        ax.set_xlabel('Strain [mm/mm]')
+        ax.set_ylabel('Stress [MPa]')     
+        
+        #find YS
+        prompt = 'Left click 1 point to define the yield strength.'
+        pt = UI_get_pts(prompt,n=1,ax=ax)[0]
+        YS_idx = find_nearest_idx(x,y,pt[0],pt[1])
+        YS = y[YS_idx]
+  
+        #plot UTS
+        ax.plot(x[YS_idx],y[YS_idx],'^',color='C0',label='0.2% offset')
+        ax.plot(x[UTS_idx],y[UTS_idx],'dr',color='C1',label='ultimate tensile')
+        
+        
         # find elongation at fracture
-        eps_total = x.dropna().iloc[-1]
+        prompt = 'Left click 1 point to define the fracture point.'
+        pt = UI_get_pts(prompt,n=1,ax=ax)[0]
+        eps_idx = find_nearest_idx(x,y,pt[0],pt[1])
+        eps_total = x[eps_idx]        
         eps_nu = eps_total-eps_u
 
-        # Find Area under curve (toughness)
+        #plot elongation
+        ax.plot(eps_u*np.ones(2,),[0,UTS],'--',color='C2')
+        ax.plot(eps_total*np.ones(2,),[0,y[eps_idx]],'--',color='C3')      
+        ax.plot(eps_u,0,'o',color='C2',label='uniform elongation')
+        ax.plot(eps_total,0,'s',color='C3',label='total elongation')
+
+        # Find Area under curve (toughness)0:        
+
+        
         toughness = integrate.trapezoid(y, x)
         
+        
         if plot_flag:
-            f,ax = make_figure()
-            
-            ax.plot(x,y,color='k')
-            ax.plot(0.002+np.array([0,UTS])/true_modulus,[0,UTS],'--',color='C0')
-            ax.plot(eps_u*np.ones(2,),[0,UTS],'--',color='C2')
-            ax.plot(eps_total*np.ones(2,),[0,y.dropna().iloc[-1]],'--',color='C3')
-            
-            ax.plot(x_smooth[YS_idx],y_smooth[YS_idx],'^',color='C0',label='0.2% offset')
-            ax.plot(x[UTS_idx],y[UTS_idx],'dr',color='C1',label='ultimate tensile')
-            ax.plot(eps_u,0,'o',color='C2',label='uniform elongation')
-            ax.plot(eps_total,0,'s',color='C3',label='total elongation')
+            ax.legend()
+            ax.set_title('')
+            f.subplots_adjust(top=0.99,bottom=0.12,left=0.17,right=0.99,hspace=0.2,wspace=0.2)            
+        else:
+            time.sleep(0.25)
+            plt.close(f)
 
-            ax.set_xlabel('Strain [mm/mm]')
-            ax.set_ylabel('Stress [MPa]')
        
         return true_modulus, YS, UTS, eps_u, eps_nu, eps_total, toughness
 
@@ -1673,6 +1671,10 @@ class RingPull(TensileTest):
         self.W = W
         self.d_mandrel = d_mandrel
         self.thickness = (OD-ID)/2
+        self.OD_path = None
+        self.ID_path = None
+
+        
 
         # find gauge length
         # L. Yegorova, et al., Description of Test Procedures and Analytical Methods, Database on the Behavior of High Burnup Fuel Rods with Zr1%Nb Cladding and UO2 Fuel (VVER Type) under Reactivity Accident Conditions, 2, U.S. Nuclear Regulatory Commission, 1999, pp. 6.16e6.19. NUREG/IA-0156, n.d.
@@ -1686,10 +1688,6 @@ class RingPull(TensileTest):
         
         super().__init__(LF_file,software,gauge_length,A_x,get_geometry_flag)
         # self.Image_class = Ring_Image  
-        
-        if not hasattr(self,'OD_path'):
-            self.OD_path = None
-            self.ID_path = None
 
     def get_a(self, r):
         return self.open_Image(0).get_a(r)        
@@ -1710,60 +1708,7 @@ class RingPull(TensileTest):
                         centroid = self.centroid)
         return img
     
-    def plot_strain_distribution(self, n, theta=pi/2, mode='ett',extrap=False, ax=None, **plot_kwargs):
-        """
-        Description
-        -----------
-        Plots the strain distribution across the thickness of the ring. 
-        Parameters
-        ----------
-        n : TYPE
-            DESCRIPTION.
-        theta : float, np.array, optional
-            The value of theta to get strain value from. The default is pi/2.
-        mode : str, optional
-            The type of strain to return. The default is 'ett'.
-        extrap : TYPE, optional
-            Whether or not to use extrapolation to get values. If False, the 
-            function returns NaN values where it is not defined. The default 
-            is False.
-        ax : matplotlib.axes, optional
-            The matplotlib axes object to modify. The default is None.
-        fill : bool, optional
-            Flag for if the area unde the curve should be filled. The default is False.
-        fill_colors : list of 2 colors, optional
-            List of col. The default is ['#F47558', '#89D279'].
-        plot_kwargs : dict, optional
-            Dictionary of colors. The default is color = k.
-        Returns
-        -------
-        f : matplotlib.figure
-            The created figure for the plot
-        ax : matplotlib.axes
-            The created axes for the plot
-        """
-        default_kwargs = {'color': 'k'}
-        plot_kwargs = { **default_kwargs, **plot_kwargs }
-        f,ax = make_figure(ax)
 
-        # open DIC_Image
-        img = self.open_Image(n)
-        
-        # plot the strain distribution
-        a, e = img.get_strain_distribution(theta, mode, extrap,50)
-
-        # plot the strain distribution
-        ax.plot(a, e, **plot_kwargs)
-        # modify the axis parameters to create pretty plots
-        ax.set_xlim(0, 1)
-        ax.set_ylabel('strain [mm/mm]')
-        ax.axhline(0,color='k',ls='--',lw=.5)
-        ax.tick_params(axis='x', which='minor', direction='in', top=False, bottom=False, length=2)
-        ax.set_xticks([0, 1])
-        ax.set_xticklabels(['ID', 'OD'])
-        ax.legend()
-        f.subplots_adjust(top=0.965,bottom=0.080,left=0.17,right=0.95,hspace=0.2,wspace=0.2)
-        return f, ax
 
     def get_geometry(self):
         img = self.open_Image(0)
