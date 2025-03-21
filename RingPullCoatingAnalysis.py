@@ -95,10 +95,10 @@ class RingPullCoatingAnalysis():
                         prompt = 'Left click points on the ring (right) to find theta.' 
                     elif self.mode=='compression':
                         f = plt.figure(figsize=(6,4.5))
-                        gs = GridSpec(2,1,wspace=.01,hspace=.01)
+                        gs = GridSpec(1,2,wspace=.01,hspace=.01)
                         ax1 = f.add_subplot(gs[0,0])
-                        ax2 = f.add_subplot(gs[1,0])
-                        prompt = 'Left click points on the ring (bottom) to find theta.' 
+                        ax2 = f.add_subplot(gs[0,1])
+                        prompt = 'Left click points on the ring (right) to find theta.' 
                 else:
                     ax1.images[0].remove()
                     ax2.images[0].remove()
@@ -141,16 +141,19 @@ class RingPullCoatingAnalysis():
             img = self.test.open_Image(n_i)
             f,ax = img.plot_Image(state='deformed', mode='e_vm',log_transform_flag=True, max_strain=0.5, ax=ax)
             if self.mode =='tension':
-                [ax.axhline(y,color=f'C{ii}',lw=1) for ii,y in enumerate(loc_array_top[i])]
+                [ax.axhline(y,color=f'C{ii}',lw=1,label=f'{ii:02}') for ii,y in enumerate(loc_array_top[i])]
             elif self.mode == 'compression':
-                [ax.axvline(x,color=f'C{ii}',lw=1) for ii,x in enumerate(loc_array_top[i])]         
+                [ax.axvline(x,color=f'C{ii}',lw=1,label=f'{ii:02}') for ii,x in enumerate(loc_array_top[i])]         
+            ax.legend()
             prompt = f'Left click {len(loc_array_top[i])} points on the ring where the line intersects with the outer diameter.'
+            
             pts = UI_get_pts(n=len(loc_array_top[i]), prompt=prompt)
 
             ax.images[0].remove()
             [line.remove() for line in ax.lines[::-1]]
             ax.collections[0].colorbar.remove()
             ax.collections[0].remove()
+            
             
             img_array.append(img)
             pts_array.append(pts)
@@ -415,15 +418,20 @@ class RingPullCoatingAnalysis():
             
             a = a[~np.isnan(ett)]
             ett = ett[~np.isnan(ett)]
+           
             try:
                 m,b,_,_,_ = linregress(a,ett)
                 
-                a, e = img.get_strain_distribution(theta=angle, mode='ett', extrap=False)
+                e = img.get_value(a,angle,mode='ett')
                 ax.plot(a,e,color = 'C'+str(i))
                 ax.plot(np.linspace(0,1),np.linspace(0,1)*m+b,color = 'C'+str(i),lw=0.5,ls='--') 
                 ax.set_ylim(-.07,0.07)
             except:
                 pass
+            
+            
+            
+            
         
         ax.axhline(0,ls='--',color='k',lw=0.3)
         ax.set_title(f'Cross thickness strain, n = {n_i}')

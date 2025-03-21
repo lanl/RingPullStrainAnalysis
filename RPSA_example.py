@@ -8,7 +8,7 @@ Created on Mon Aug 16 15:54:21 2021
 
 ## import the necessary modules from the saved folder
 import sys
-sys.path.insert(0, 'E:\\Projects\\RingPull\\RPSA')
+sys.path.insert(0, 'D:\\Projects\\RingPull\\RPSA')
 from RingPullStrainAnalysis import RingPull,make_figure
 from RingPullCoatingAnalysis import RingPullCoatingAnalysis
 
@@ -22,7 +22,7 @@ import matplotlib as mpl
 ## set all the variables you will need to run this RingPullStrainAnalysis code:
     
 ## the file with the load frame data and their corresponding images
-LF_file = 'E:\\Projects\\RingPull\\RPSA\\RPSA_example\\sample_data\\sample_data_LF.csv'
+LF_file = 'D:\\Projects\\RingPull\\RPSA\\RPSA_example\\sample_data\\sample_data_LF.csv'
 ## The DIC analysis software that was used.
 DIC_software = 'VIC-2D'
 ## geometric dimensions of the ring pull test
@@ -92,14 +92,6 @@ img.plot_Image(state='deformed')
 ## Coordinate transformation is automated and will be performed 
 ## when necessary.
 img.plot_Image(state='deformed',mode='ett')
-
-## Create coating analysis instance and run it on a few different frames
-method = RingPullCoatingAnalysis(test,mode='compression')
-n=[60,65,70]
-analysis_data = method.get_side_image_strain(n,debug=False)
-
-
-
 
 
 

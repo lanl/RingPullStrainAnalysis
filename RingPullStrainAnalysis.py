@@ -8,13 +8,13 @@ output 2-dimensional mesh of strain data specific to a gaugeless Ring Pull test
 and analyzing it for parameters of interest. RPSA also allows input load frame 
 data that is synchronized with the DIC images.
 
-v1.1
+v1.2
 
 Created by:
     Peter Beck
     pmbeck@lanl.gov
 Updated:
-    22-Nov-2023
+    26-Jun-2024
 
 
 General notes on naming conventions and coding practices:
@@ -86,8 +86,6 @@ import tkinter as tk
 from tkinter import simpledialog,filedialog
 
 from matplotlib.gridspec import GridSpec
-
-
 
 
 def make_figure(ax=None):
@@ -250,7 +248,7 @@ def make_GIF(images_list, output_filename, end_pause=True,**writer_kwargs):
     None
     
     '''
-    default_kwargs = {'subrectangles':True}
+    default_kwargs = {}#{'subrectangles':True}
     writer_kwargs = { **default_kwargs, **writer_kwargs }
     if end_pause:
         if type(end_pause) == bool:
@@ -388,7 +386,7 @@ def UI_circle(ax,prompt,facecolor,num = 50):
             (r*np.cos(theta)+c[0],
              r*np.sin(theta)+c[1])
             for theta in np.linspace(0,2*pi,num)]
-        my_circle = Polygon(pts, True, facecolor=facecolor,alpha = 0.2)
+        my_circle = Polygon(pts, closed = True, facecolor=facecolor,alpha = 0.2)
         ax.add_patch(my_circle)
         plt.title('Is this acceptable? Click to continue or hit enter to retry.')
         plt.draw()
@@ -503,7 +501,7 @@ def UI_polygon(ax,prompt,facecolor):
         pts = UI_get_pts(prompt,None)
         pts.append(pts[0])
         pts = np.array(pts)
-        my_polygon = Polygon(pts, True, facecolor=facecolor,alpha = 0.2)
+        my_polygon = Polygon(pts, closed = True, facecolor=facecolor,alpha = 0.2)
         ax.add_patch(my_polygon)
         
         plt.title('Is this acceptable? Click to continue or hit enter to retry.')
@@ -631,7 +629,7 @@ def log_transform(e_row,max_strain,lim=1e2):
     return img_value
 
 ################################################################## 
-class Image_Base:
+class TensileImage:
     '''
     Description
     -----------
@@ -639,14 +637,22 @@ class Image_Base:
     '''
     
     def __init__(self, test_img, init_img, software='VIC-2D',centroid = np.array((0,0)),scale=1):
-        csv_file = test_img.split('.tif')[0]+'.csv'
-        self.df = pd.read_csv(csv_file)        
+        try:
+            csv_file = test_img.split('.tif')[0]+'.csv'
+            self.df = pd.read_csv(csv_file) 
+        except:
+            csv_file = test_img.split('.tif')[0]+'.txt'
+            self.df = pd.read_csv(csv_file)             
+        
         # rename column names to standard. VIC 2D puts excess spaces, which first need to be stripped.
         column_rename_dict2 = {key:key.strip() for key in self.df.columns }
         self.df.rename(column_rename_dict2, axis=1, inplace=True)
 
         # delete all unnecessary data
-        self.df = self.df[self.df['"sigma"'] != -1]
+        try:
+            self.df = self.df[self.df['"sigma"'] != -1]
+        except:
+            pass
 
         if software == 'MOOSE':#need to add vonmises strain, e1,e2, and stresses
             column_rename_dict = {'x':'x','y':'y','"Xp"':'x_def','"Yp"':'y_def',
@@ -670,9 +676,12 @@ class Image_Base:
         
         
         self.df.rename(column_rename_dict, axis=1, inplace=True)
-        
-        if not 'e_1invar' in self.df.columns:        
-            self.df['e_1invar'] = self.df['e1']+self.df['e2']
+
+        try:
+            if not 'e_1invar' in self.df.columns:        
+                self.df['e_1invar'] = self.df['e1']+self.df['e2']
+        except:
+            pass
             
         self.df['x_def'] = self.df['x'] + self.df['u']
         self.df['y_def'] = self.df['y'] + self.df['v']
@@ -869,12 +878,12 @@ class Image_Base:
                 label.set_verticalalignment('baseline')
         return f,ax  
 
-class Ring_Image(Image_Base):
+class RingImage(TensileImage):
     '''
     Description
     -----------
     A class to analyze the output image and data file from the DIC software. 
-    This class inherets from Image_Base and modifies methods pertaining to 
+    This class inherets from TensileImage and modifies methods pertaining to 
     experimental (DIC) data.
     '''
 
@@ -928,8 +937,13 @@ class Ring_Image(Image_Base):
         # if specified, delete all the entries out of the bounds of the ring
         if type(OD_path) != type(None):
             idx_pts = [(self.df['x'][n]*self.scale,self.df['y'][n]*self.scale) for n in self.df.index] 
-            inside = OD_path.contains_points(idx_pts)*np.invert(ID_path.contains_points(idx_pts))
+            
+            if type(ID_path) != type(None):
+                inside = OD_path.contains_points(idx_pts)*np.invert(ID_path.contains_points(idx_pts))
+            else:
+                inside = OD_path.contains_points(idx_pts)
             self.df = self.df[inside] 
+            
 
         if type(centroid) == type(None):
             # have not determined the center, then use ring geometry to find it
@@ -981,17 +995,14 @@ class Ring_Image(Image_Base):
                 reg_point = a * m + b
                 return reg_point       
             
-            
-            N = 5
+            N = 50
             a = np.linspace(0, 1, N)
             
-            # print(a)
-            # print(theta)
-            
             z = self.get_value(a,theta_i,mode,extrap=False)
-        
+            # z = z.flatten()
+
             a = a[np.invert(np.isnan(z))]
-            z=z[np.invert(np.isnan(z))]
+            z = z[np.invert(np.isnan(z))]
             # assert False
             if (np.size(a) <= 1):#if the entire array is NaN or if there is not enough values to extrapolate off of
                 z = np.nan
@@ -1060,11 +1071,8 @@ class Ring_Image(Image_Base):
         if mode not in self.df.columns:#mode is in df
             self.analyze_radial_strains()
         
-        if type(theta) == float or type(theta) == list:
-            np.array(theta)
-        
-        if type(a) ==int:
-            a = a + np.zeros(theta.shape)
+
+        a,theta = np.meshgrid(a,theta)
         
         r = self.get_r(a)
         # choose strain value to use
@@ -1080,8 +1088,14 @@ class Ring_Image(Image_Base):
 
         if extrap and np.isnan(z).any():
             idx = np.isnan(z)
+
+            # print(a)
+            # print(a[idx])
+
             z[idx] = self._get_extrap_value(a[idx],theta[idx],mode,extrap,smoothing)
             
+        if 1 in z.shape:
+            z = z.flatten()
             
         return z
 
@@ -1436,7 +1450,7 @@ class TensileTest():
         
         # correct equivalent strain to fix the curve
         x = (x - y*(1/c[1]-1/true_modulus) + c[0]/c[1])
-        # self.df['mod_adj_eng_strain'] = copy.copy(x)
+        self.df['mod_adj_eng_strain'] = copy.copy(x)
         
        
 
@@ -1517,7 +1531,7 @@ class TensileTest():
         img_file = self.df['top_img_file'].iloc[n]
         
         # open Image
-        img = Image_Base(test_img = img_file, init_img = self.df['top_img_file'][0], 
+        img = TensileImage(test_img = img_file, init_img = self.df['top_img_file'][0], 
                         software = self.software,centroid = self.centroid,scale=self.scale)
         return img
 
@@ -1681,13 +1695,11 @@ class RingPull(TensileTest):
         k = 1
         # gauge_length = pi/2*(self.ID-k*d_mandrel)
         gauge_length = pi/2*((self.ID+self.OD)/2-k*d_mandrel)
-        self.pin_angle = pi/2*(1-(k*d_mandrel)/self.ID)+pi/2
 
         # calculate cross sectional area
         A_x = ((OD-ID)*W)
         
         super().__init__(LF_file,software,gauge_length,A_x,get_geometry_flag)
-        # self.Image_class = Ring_Image  
 
     def get_a(self, r):
         return self.open_Image(0).get_a(r)        
@@ -1700,7 +1712,7 @@ class RingPull(TensileTest):
         img_file = self.df['top_img_file'].iloc[n]
         
         # open Image
-        img = Ring_Image(test_img = img_file, init_img = self.df['top_img_file'][0], 
+        img = RingImage(test_img = img_file, init_img = self.df['top_img_file'][0], 
                         software = self.software, 
                         ID=self.ID, OD=self.OD, d_mandrel=self.d_mandrel,
                         OD_path=self.OD_path,ID_path=self.ID_path,
@@ -1739,9 +1751,6 @@ class RingPull(TensileTest):
         self.scale = np.mean(np.amax(pts[0:-1,:],axis=0) - np.amin(pts[0:-1,:],axis=0))/self.OD #pixels per mm
         
         plt.close(f)
-        
-        
-
 
     def plot_side_img(self,n, ax=None,side_view_col='side_img_file',side_img_zoom = ((None,None),(None,None))):
         f,ax = make_img_figure(ax) # if no axes provided, create one
@@ -1750,24 +1759,48 @@ class RingPull(TensileTest):
         ax.set_xlim(side_img_zoom[0])
         ax.set_ylim(side_img_zoom[1])  
         return f,ax
-    
-    def plot_top_side_img(self,n,top_img_zoom = ((None,None),(None,None)),side_img_zoom = ((None,None),(None,None)),side_view_col='side_img_file'):
-        f = plt.figure(figsize=(4.5,3))
-        f.subplots_adjust(top=0.93,bottom=0.00,left=0.00,right=0.925,hspace=0.2,wspace=0.2)
-        gs = GridSpec(8,5,wspace=0.0010,hspace=0.100)
-        ax1 = f.add_subplot(gs[0:6,0:5])
-        ax2 = f.add_subplot(gs[6:8,0:5])
+
+
+
+class BrazilDisk(RingPull):
+
+    def __init__(self, LF_file=None,software=None, OD=None, W=None,get_geometry_flag=False):
+
         
-        f,ax = self.open_Image(n).plot_Image(ax=ax1,max_strain = 0.5)
-        ax1.set_xlim(top_img_zoom[0])
-        ax1.set_ylim(top_img_zoom[1])         
+        super().__init__(LF_file=LF_file,   software=software, 
+                         ID=0,              OD=OD, 
+                         d_mandrel=0,       W=W,
+                         get_geometry_flag=get_geometry_flag)
+
+        #reproduce some thingd from Tensile Test class
         
-        self.plot_side_img(n,ax2,side_view_col)
-        ax2.set_xlim(side_img_zoom[0])
-        ax2.set_ylim(side_img_zoom[1])        
+        self.gauge_length = OD
+        self.A_x = OD*W
+
+        self.df['stress (MPa)'] = self.df['load (N)']/self.A_x
+        self.df['eng_strain'] = self.df['displacement (mm)']/self.gauge_length
+        self.df['true_strain'] = np.log(1+self.df['eng_strain'])
+        self.df['true_stress'] = self.df['stress (MPa)'] * \
+            (1+self.df['eng_strain'])
+                
+
+    def get_geometry(self):
+        img = self.open_Image(0)
+        plot_img = mpimg.imread(img.test_img_file)
+
+        f,ax = make_img_figure()   
+        ax.imshow(plot_img, cmap='gray')
         
+        pts = UI_circle(ax,'Left click 3 points to make the outer circle.',facecolor='r')
+        # pts2 = UI_circle(ax,'Left click 3 points to make the inner circle.',facecolor='b')
+
+        self.OD_path = mplPath.Path(pts[0:-1,:])
+        self.centroid = np.mean(pts[0:-1,:],axis=0)
+        self.scale = np.mean(np.amax(pts[0:-1,:],axis=0) - np.amin(pts[0:-1,:],axis=0))/self.OD #pixels per mm
+        plt.close(f)
         
-        return f, [ax1,ax2]
+
+
 
 ##################################################################
 
